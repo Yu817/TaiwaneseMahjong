@@ -43,9 +43,10 @@ jobs:
             TAG="$GITHUB_REF_NAME"
             VERSION="${TAG#v}"
           else
-            TAG="latest"
-            VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
-            VERSION="${VERSION%-SNAPSHOT}"
+            BASE_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+            BASE_VERSION="${BASE_VERSION%-SNAPSHOT}"
+            VERSION="${BASE_VERSION}-build.${GITHUB_RUN_NUMBER}"
+            TAG="v${VERSION}"
           fi
 
           TITLE="Release ${VERSION} - ${COMMIT_SUBJECT}"
@@ -62,6 +63,7 @@ jobs:
             echo "## 建置資訊"
             echo
             echo "- 版本：\`${VERSION}\`"
+            echo "- Build：\`${GITHUB_RUN_NUMBER}\`"
             echo "- Commit：\`${GITHUB_SHA}\`"
           } > release-notes.md
 
@@ -102,13 +104,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if [[ "$TAG" == "latest" ]]; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git tag -f latest "$GITHUB_SHA"
-            git push origin refs/tags/latest --force
-          fi
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET_PATH" --clobber
             gh release edit "$TAG" \
