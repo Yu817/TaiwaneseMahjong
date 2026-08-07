@@ -40,7 +40,28 @@ mvn clean test
 mvn clean package
 ```
 
-完成後的插件位於 `target/TaiwaneseMahjong-2.0.0.jar`。將 JAR 放入 Paper 的 `plugins` 資料夾，並將 `resource-pack` 內容部署到伺服器使用的資源包；首次更新資源包後請重新連線確認 3D 牌面與花牌模型。
+完成後的插件位於 `target/TaiwaneseMahjong-2.0.0.jar`。
+
+## ItemsAdder 材質包
+
+本專案的材質已整理成 ItemsAdder content pack：
+
+```text
+itemsadder-content/
+└─ mahjongcraft/
+   ├─ configs/items.yml
+   └─ resourcepack/assets/mahjongcraft/
+      ├─ models/
+      └─ textures/
+```
+
+安裝方式：
+
+1. 將 `itemsadder-content/mahjongcraft` 整個資料夾複製到伺服器的 `plugins/ItemsAdder/contents/`。
+2. 執行 `/iazip`，等待 ItemsAdder 完成產生及壓縮資源包。
+3. 玩家重新連線，確認 3D 牌面與花牌模型。
+
+麻將牌使用 `PAPER` 的 Custom Model Data `900001` 至 `900043`。請勿另外加入或合併 `assets/minecraft/items/paper.json`；Paper 的模型路由應交由 ItemsAdder 統一產生，避免覆蓋伺服器中其他使用 `PAPER` 的自訂物品。
 
 ## Project overview
 

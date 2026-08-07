@@ -1,0 +1,305 @@
+info:
+  namespace: mahjongcraft
+
+items:
+  m1:
+    display_name: "一萬"
+    resource:
+      material: PAPER
+      model_id: 900001
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m1
+  m2:
+    display_name: "二萬"
+    resource:
+      material: PAPER
+      model_id: 900002
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m2
+  m3:
+    display_name: "三萬"
+    resource:
+      material: PAPER
+      model_id: 900003
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m3
+  m4:
+    display_name: "四萬"
+    resource:
+      material: PAPER
+      model_id: 900004
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m4
+  m5:
+    display_name: "五萬"
+    resource:
+      material: PAPER
+      model_id: 900005
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m5
+  m6:
+    display_name: "六萬"
+    resource:
+      material: PAPER
+      model_id: 900006
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m6
+  m7:
+    display_name: "七萬"
+    resource:
+      material: PAPER
+      model_id: 900007
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m7
+  m8:
+    display_name: "八萬"
+    resource:
+      material: PAPER
+      model_id: 900008
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m8
+  m9:
+    display_name: "九萬"
+    resource:
+      material: PAPER
+      model_id: 900009
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_m9
+  p1:
+    display_name: "一筒"
+    resource:
+      material: PAPER
+      model_id: 900010
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p1
+  p2:
+    display_name: "二筒"
+    resource:
+      material: PAPER
+      model_id: 900011
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p2
+  p3:
+    display_name: "三筒"
+    resource:
+      material: PAPER
+      model_id: 900012
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p3
+  p4:
+    display_name: "四筒"
+    resource:
+      material: PAPER
+      model_id: 900013
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p4
+  p5:
+    display_name: "五筒"
+    resource:
+      material: PAPER
+      model_id: 900014
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p5
+  p6:
+    display_name: "六筒"
+    resource:
+      material: PAPER
+      model_id: 900015
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p6
+  p7:
+    display_name: "七筒"
+    resource:
+      material: PAPER
+      model_id: 900016
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p7
+  p8:
+    display_name: "八筒"
+    resource:
+      material: PAPER
+      model_id: 900017
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p8
+  p9:
+    display_name: "九筒"
+    resource:
+      material: PAPER
+      model_id: 900018
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_p9
+  s1:
+    display_name: "一索"
+    resource:
+      material: PAPER
+      model_id: 900019
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s1
+  s2:
+    display_name: "二索"
+    resource:
+      material: PAPER
+      model_id: 900020
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s2
+  s3:
+    display_name: "三索"
+    resource:
+      material: PAPER
+      model_id: 900021
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s3
+  s4:
+    display_name: "四索"
+    resource:
+      material: PAPER
+      model_id: 900022
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s4
+  s5:
+    display_name: "五索"
+    resource:
+      material: PAPER
+      model_id: 900023
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s5
+  s6:
+    display_name: "六索"
+    resource:
+      material: PAPER
+      model_id: 900024
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s6
+  s7:
+    display_name: "七索"
+    resource:
+      material: PAPER
+      model_id: 900025
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s7
+  s8:
+    display_name: "八索"
+    resource:
+      material: PAPER
+      model_id: 900026
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s8
+  s9:
+    display_name: "九索"
+    resource:
+      material: PAPER
+      model_id: 900027
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_s9
+  east:
+    display_name: "東風"
+    resource:
+      material: PAPER
+      model_id: 900028
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_east
+  south:
+    display_name: "南風"
+    resource:
+      material: PAPER
+      model_id: 900029
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_south
+  west:
+    display_name: "西風"
+    resource:
+      material: PAPER
+      model_id: 900030
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_west
+  north:
+    display_name: "北風"
+    resource:
+      material: PAPER
+      model_id: 900031
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_north
+  white_dragon:
+    display_name: "白板"
+    resource:
+      material: PAPER
+      model_id: 900032
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_white_dragon
+  green_dragon:
+    display_name: "發財"
+    resource:
+      material: PAPER
+      model_id: 900033
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_green_dragon
+  red_dragon:
+    display_name: "紅中"
+    resource:
+      material: PAPER
+      model_id: 900034
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_red_dragon
+  flower_1:
+    display_name: "春"
+    resource:
+      material: PAPER
+      model_id: 900035
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_1
+  flower_2:
+    display_name: "夏"
+    resource:
+      material: PAPER
+      model_id: 900036
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_2
+  flower_3:
+    display_name: "秋"
+    resource:
+      material: PAPER
+      model_id: 900037
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_3
+  flower_4:
+    display_name: "冬"
+    resource:
+      material: PAPER
+      model_id: 900038
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_4
+  flower_5:
+    display_name: "梅"
+    resource:
+      material: PAPER
+      model_id: 900039
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_5
+  flower_6:
+    display_name: "蘭"
+    resource:
+      material: PAPER
+      model_id: 900040
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_6
+  flower_7:
+    display_name: "竹"
+    resource:
+      material: PAPER
+      model_id: 900041
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_7
+  flower_8:
+    display_name: "菊"
+    resource:
+      material: PAPER
+      model_id: 900042
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_flower_8
+  unknown:
+    display_name: "未知牌"
+    resource:
+      material: PAPER
+      model_id: 900043
+      generate: false
+      model_path: item/mahjong_tile/mahjong_tile_unknown

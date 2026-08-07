@@ -80,7 +80,10 @@ jobs:
           fi
           mvn -B -ntp clean package
 
-      - name: Prepare release asset
+      - name: Validate ItemsAdder content
+        run: python3 tools/validate_itemsadder_content.py
+
+      - name: Prepare release assets
         shell: bash
         run: |
           JAR="$(find target -maxdepth 1 -type f -name '*.jar' \
@@ -95,9 +98,15 @@ jobs:
           fi
 
           mkdir -p release
-          ASSET_PATH="release/${REPO_NAME}-${VERSION}.jar"
-          cp "$JAR" "$ASSET_PATH"
-          echo "ASSET_PATH=$ASSET_PATH" >> "$GITHUB_ENV"
+          PLUGIN_ASSET="release/${REPO_NAME}-${VERSION}.jar"
+          ITEMSADDER_ASSET="release/${REPO_NAME}-ItemsAdder-${VERSION}.zip"
+          cp "$JAR" "$PLUGIN_ASSET"
+          (
+            cd itemsadder-content
+            zip -qr "../$ITEMSADDER_ASSET" mahjongcraft
+          )
+          echo "PLUGIN_ASSET=$PLUGIN_ASSET" >> "$GITHUB_ENV"
+          echo "ITEMSADDER_ASSET=$ITEMSADDER_ASSET" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
         env:
@@ -105,7 +114,7 @@ jobs:
         shell: bash
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET_PATH" --clobber
+            gh release upload "$TAG" "$PLUGIN_ASSET" "$ITEMSADDER_ASSET" --clobber
             gh release edit "$TAG" \
               --title "$TITLE" \
               --notes-file release-notes.md \
@@ -113,7 +122,7 @@ jobs:
               --prerelease=false \
               --latest
           else
-            gh release create "$TAG" "$ASSET_PATH" \
+            gh release create "$TAG" "$PLUGIN_ASSET" "$ITEMSADDER_ASSET" \
               --title "$TITLE" \
               --notes-file release-notes.md \
               --target "$GITHUB_SHA" \
