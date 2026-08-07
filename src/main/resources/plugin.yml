@@ -1,0 +1,44 @@
+name: TaiwaneseMahjong
+version: '${version}'
+main: com.mahjongplay.MahjongPlayPlugin
+description: Taiwanese 16-tile Mahjong in Minecraft
+api-version: '1.21'
+authors:
+  - Yu817
+commands:
+  mahjong:
+    description: Mahjong game commands
+    usage: /mahjong <create|join|leave|ready|start|bot|destroy|info|list|action>
+    aliases: [mj, majiang]
+permissions:
+  mahjongplay.command.create:
+    description: 允許建立麻將桌
+  mahjongplay.command.join:
+    description: 允許加入麻將桌
+    default: true
+  mahjongplay.command.leave:
+    description: 允許離開麻將桌
+    default: true
+  mahjongplay.command.ready:
+    description: 允許準備
+    default: true
+  mahjongplay.command.unready:
+    description: 允許取消準備
+    default: true
+  mahjongplay.command.start:
+    description: 允許強制開始遊戲
+  mahjongplay.command.bot:
+    description: 允許新增機器人
+  mahjongplay.command.kick:
+    description: 允許踢出玩家
+  mahjongplay.command.destroy:
+    description: 允許銷毀麻將桌
+  mahjongplay.command.action:
+    description: 允許執行麻將操作
+    default: true
+  mahjongplay.command.list:
+    description: 允許查看麻將桌列表
+    default: true
+  mahjongplay.command.info:
+    description: 允許查看麻將桌資訊
+    default: true
