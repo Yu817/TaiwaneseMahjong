@@ -47,10 +47,15 @@ object ActionBarHUD {
             }
             bar = bar.append(status)
 
-            val previewMachi = mjPlayer.previewMachiTiles.distinct().take(6)
-            if (previewMachi.isNotEmpty()) {
+            // Only show the waits for the player's CURRENT 16-tile waiting hand.
+            // previewMachiTiles also includes waits that would become available
+            // after discarding one tile from a 17-tile drawn hand. Calling that
+            // generic preview "聽牌" was misleading: it could show 7筒 even
+            // though the current 17 tiles had not actually won on 7筒.
+            val exactMachi = mjPlayer.machiTiles.distinct().take(6)
+            if (exactMachi.isNotEmpty()) {
                 bar = bar.append(
-                    Component.text("  │  聽牌 ${previewMachi.joinToString("、") { machiDisplayName(it) }}", NamedTextColor.YELLOW)
+                    Component.text("  │  聽牌 ${exactMachi.joinToString("、") { machiDisplayName(it) }}", NamedTextColor.YELLOW)
                 )
             }
             player.sendActionBar(bar)
