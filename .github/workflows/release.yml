@@ -4,15 +4,18 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional exact release version, e.g. 3.0.0. Leave blank to auto-increment patch.'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.repository }}-${{ github.ref_name }}
+  group: release-${{ github.repository }}-main
   cancel-in-progress: true
 
 jobs:
@@ -32,52 +35,64 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Resolve release metadata
+      - name: Resolve semantic version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          PROJECT_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          PROJECT_VERSION="${PROJECT_VERSION%-SNAPSHOT}"
+
+          if [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="${INPUT_VERSION#v}"
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid version: $INPUT_VERSION (expected X.Y.Z)" >&2
+              exit 1
+            fi
+          else
+            LAST_TAG="$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+            if [[ -n "$LAST_TAG" ]]; then
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG#v}"
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            elif [[ "$PROJECT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            elif [[ "$PROJECT_VERSION" =~ ^([0-9]+)\.([0-9]+) ]]; then
+              VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0"
+            elif [[ "$PROJECT_VERSION" =~ ^([0-9]+)$ ]]; then
+              VERSION="${BASH_REMATCH[1]}.0.0"
+            else
+              echo "Cannot derive semantic version from Maven version: $PROJECT_VERSION" >&2
+              exit 1
+            fi
+          fi
+
+          TAG="v${VERSION}"
           COMMIT_SUBJECT="$(git log -1 --pretty=%s)"
           COMMIT_BODY="$(git log -1 --pretty=%b)"
 
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            TAG="$GITHUB_REF_NAME"
-            VERSION="${TAG#v}"
-          else
-            BASE_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
-            BASE_VERSION="${BASE_VERSION%-SNAPSHOT}"
-            VERSION="${BASE_VERSION}-build.${GITHUB_RUN_NUMBER}"
-            TAG="v${VERSION}"
-          fi
-
-          TITLE="Release ${VERSION} - ${COMMIT_SUBJECT}"
-
           {
-            echo "## 更新內容"
+            echo "## Description"
+            echo
+            echo "${REPO_NAME} v${VERSION} includes the latest successfully built changes from the main branch."
+            echo
+            echo "### Latest change"
             echo
             echo "- ${COMMIT_SUBJECT}"
             if [[ -n "$COMMIT_BODY" ]]; then
               echo
               printf '%s\n' "$COMMIT_BODY"
             fi
-            echo
-            echo "## 建置資訊"
-            echo
-            echo "- 版本：\`${VERSION}\`"
-            echo "- Build：\`${GITHUB_RUN_NUMBER}\`"
-            echo "- Commit：\`${GITHUB_SHA}\`"
-          } > release-notes.md
+          } > release-prefix.md
 
           echo "REPO_NAME=$REPO_NAME" >> "$GITHUB_ENV"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "TITLE=$TITLE" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Build plugin
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            mvn -B -ntp versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
-          fi
+          mvn -B -ntp versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
           mvn -B -ntp clean package
 
       - name: Validate ItemsAdder content
@@ -114,17 +129,14 @@ jobs:
         shell: bash
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$PLUGIN_ASSET" "$ITEMSADDER_ASSET" --clobber
-            gh release edit "$TAG" \
-              --title "$TITLE" \
-              --notes-file release-notes.md \
-              --target "$GITHUB_SHA" \
-              --prerelease=false \
-              --latest
-          else
-            gh release create "$TAG" "$PLUGIN_ASSET" "$ITEMSADDER_ASSET" \
-              --title "$TITLE" \
-              --notes-file release-notes.md \
-              --target "$GITHUB_SHA" \
-              --latest
+            echo "Release $TAG already exists; refusing to overwrite history." >&2
+            exit 1
           fi
+
+          PREFIX_NOTES="$(cat release-prefix.md)"
+          gh release create "$TAG" "$PLUGIN_ASSET" "$ITEMSADDER_ASSET" \
+            --title "${REPO_NAME} v${VERSION}" \
+            --notes "$PREFIX_NOTES" \
+            --generate-notes \
+            --target "$GITHUB_SHA" \
+            --latest
