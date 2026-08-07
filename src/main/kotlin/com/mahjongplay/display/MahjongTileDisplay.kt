@@ -5,13 +5,12 @@ import com.mahjongplay.model.MahjongTile
 import io.papermc.paper.datacomponent.DataComponentTypes
 import io.papermc.paper.datacomponent.item.CustomModelData
 import org.bukkit.Location
+import org.bukkit.Material
 import org.bukkit.entity.EntityType
 import org.bukkit.entity.Interaction
 import org.bukkit.entity.ItemDisplay
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
-import org.bukkit.Material
-import org.bukkit.entity.Display
 import org.joml.AxisAngle4f
 import org.joml.Matrix4f
 import org.joml.Quaternionf
@@ -126,17 +125,13 @@ class MahjongTileDisplay(
     }
 
     companion object {
-        // Keep the Mahjong models outside the low Paper model-data range used by
-        // other server plugins and menus.
-        private const val MODEL_DATA_BASE = 900001
-
         @Suppress("UnstableApiUsage")
         fun createTileItem(tile: MahjongTile): ItemStack {
             val item = ItemStack(Material.PAPER)
             item.setData(
                 DataComponentTypes.CUSTOM_MODEL_DATA,
                 CustomModelData.customModelData()
-                    .addFloat((MODEL_DATA_BASE + tile.code).toFloat())
+                    .addFloat((MahjongModelData.TILE_BASE + tile.code).toFloat())
                     .build()
             )
             return item

@@ -49,7 +49,9 @@ mvn clean package
 ```text
 itemsadder-content/
 └─ mahjongcraft/
-   ├─ configs/items.yml
+   ├─ configs/
+   │  ├─ items.yml
+   │  └─ table.yml
    └─ resourcepack/assets/mahjongcraft/
       ├─ models/
       └─ textures/
@@ -59,9 +61,17 @@ itemsadder-content/
 
 1. 將 `itemsadder-content/mahjongcraft` 整個資料夾複製到伺服器的 `plugins/ItemsAdder/contents/`。
 2. 執行 `/iazip`，等待 ItemsAdder 完成產生及壓縮資源包。
-3. 玩家重新連線，確認 3D 牌面與花牌模型。
+3. 玩家重新連線。
+4. 執行 `/mahjong create one`，確認麻將桌、牌面與互動功能。
 
-麻將牌使用 `PAPER` 的 Custom Model Data `900001` 至 `900043`。請勿另外加入或合併 `assets/minecraft/items/paper.json`；Paper 的模型路由應交由 ItemsAdder 統一產生，避免覆蓋伺服器中其他使用 `PAPER` 的自訂物品。
+模型資料：
+
+- 麻將牌使用 `PAPER` 的 Custom Model Data `900001` 至 `900043`。
+- 麻將桌使用 `PAPER` 的 Custom Model Data `900044`。
+- 麻將桌由插件以 `ItemDisplay` 顯示；ItemsAdder 僅負責模型路由與資源包合併。
+- 請勿另外加入或合併 `assets/minecraft/items/paper.json`，避免覆蓋伺服器中其他使用 `PAPER` 的自訂物品。
+- 麻將桌尺寸與高度可在 `MahjongTableDisplay.kt` 的 `TABLE_SCALE`、`TABLE_ORIGIN_Y_OFFSET` 調整。
+- 第三方桌子模型與貼圖來源請見 `THIRD_PARTY_NOTICES.md`。
 
 ## Project overview
 
@@ -71,7 +81,7 @@ The game logic is kept separate from Bukkit where possible, and the rule core is
 
 ## 自動發布 Release
 
-GitHub Actions 會在推送符合 `v*` 格式的版本標籤時，自動執行 Maven 測試與打包，並將 JAR 附加到 GitHub Release。
+GitHub Actions 會在推送符合 `v*` 格式的版本標籤時，自動執行 Maven 測試與打包，並將 JAR 與 ItemsAdder content pack ZIP 附加到 GitHub Release。
 
 ```bash
 git tag v2.0.0

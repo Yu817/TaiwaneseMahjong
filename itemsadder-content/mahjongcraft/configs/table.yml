@@ -1,0 +1,11 @@
+info:
+  namespace: mahjongcraft
+
+items:
+  mahjong_table:
+    display_name: "台灣麻將桌"
+    resource:
+      material: PAPER
+      model_id: 900044
+      generate: false
+      model_path: item/mahjong_table
