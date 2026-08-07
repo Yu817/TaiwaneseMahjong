@@ -3,7 +3,7 @@ package com.mahjongplay.model
 /**
  * 台灣 16 張麻將常見台數計算器。
  *
- * 台麻各地桌規會有差異；這裡延續專案既有牌型台數，並補上牌局流程常用的
+ * 台麻各地桌規會有差異；這裡延續專案既有牌型，並以常見 16 張規則補齊
  * 莊家／連莊拉莊、獨聽、三四五暗刻、海底、槓上開花、搶槓與天地人胡。
  */
 object TaiwaneseScorer {
@@ -28,6 +28,9 @@ object TaiwaneseScorer {
         val allGroups = fuuroList.map { it.toHandGroup() } + shape.concealedGroups
         val allTiles = concealedTiles + fuuroList.flatMap { it.tiles }
         val isMenzen = fuuroList.none { it.isOpen }
+        val allGroupsExposed = fuuroList.size == 5 && fuuroList.all { it.isOpen }
+        val isFullAsk = allGroupsExposed && !isTsumo
+        val isHalfAsk = allGroupsExposed && isTsumo
 
         // --- 牌局情境台 ---
         if (seatWind == Wind.EAST) {
@@ -38,10 +41,11 @@ object TaiwaneseScorer {
             }
         }
 
-        if (context.isSingleWait) items += TaiItem("獨聽", 1)
+        // 常見桌規下全求人本身就是單吊完成，不再另外重複計獨聽。
+        if (context.isSingleWait && !isFullAsk) items += TaiItem("獨聽", 1)
 
         when {
-            context.isHeavenlyHand -> items += TaiItem("天胡", 16)
+            context.isHeavenlyHand -> items += TaiItem("天胡", 24)
             context.isEarthlyHand -> items += TaiItem("地胡", 16)
             context.isHumanHand -> items += TaiItem("人胡", 8)
         }
@@ -53,7 +57,7 @@ object TaiwaneseScorer {
         }
 
         // --- 花牌 ---
-        // 保留專案既有花牌桌規：每張花 1 台，門花與圈花再各加 1 台。
+        // 目前保留專案既有花牌桌規，避免改動既有伺服器的花牌玩法。
         flowers.forEach { items += TaiItem("${it.displayName}花", 1) }
         if (flowers.any { it == MahjongTile.flowerTiles.getOrNull(seatWind.flowerIndex - 1) }) {
             items += TaiItem("門花", 1)
@@ -72,7 +76,7 @@ object TaiwaneseScorer {
         val numberedSuits = allTiles.filter { it.isNumbered }.map { it.suit }.toSet()
         val hasHonors = allTiles.any { it.isHonor }
         when {
-            numberedSuits.isEmpty() && hasHonors -> items += TaiItem("字一色", 8)
+            numberedSuits.isEmpty() && hasHonors -> items += TaiItem("字一色", 16)
             numberedSuits.size == 1 && !hasHonors -> items += TaiItem("清一色", 8)
             numberedSuits.size == 1 && hasHonors -> items += TaiItem("混一色", 4)
         }
@@ -86,11 +90,16 @@ object TaiwaneseScorer {
         if (allGroups.isNotEmpty() && allGroups.all { it.type != MeldType.SEQUENCE }) {
             items += TaiItem("碰碰胡", 4)
         }
-        if (allGroups.isNotEmpty() && allGroups.all { it.type == MeldType.SEQUENCE } &&
-            shape.pair.firstOrNull()?.let { it.isNumbered && it.number in 2..8 } == true
-        ) {
-            items += TaiItem("平胡", 2)
-        }
+
+        val isPingHu =
+            allGroups.size == 5 &&
+                allGroups.all { it.type == MeldType.SEQUENCE } &&
+                shape.pair.firstOrNull()?.isNumbered == true &&
+                !hasHonors &&
+                flowers.isEmpty() &&
+                !isTsumo &&
+                !context.isSingleWait
+        if (isPingHu) items += TaiItem("平胡", 2)
 
         val dragonTriplets = allGroups.filter { it.type != MeldType.SEQUENCE && it.representative.isDragon() }
         val dragonTypes = dragonTriplets.map { it.representative }.toSet()
@@ -141,7 +150,8 @@ object TaiwaneseScorer {
             }
         }
 
-        if (!isMenzen && fuuroList.size == 5 && !isTsumo) items += TaiItem("全求人", 4)
+        if (isFullAsk) items += TaiItem("全求人", 2)
+        if (isHalfAsk) items += TaiItem("半求人", 1)
 
         val sequenceGroups = allGroups.filter { it.type == MeldType.SEQUENCE }
         val sequenceNumbersBySuit = sequenceGroups.groupBy { it.representative.suit }
