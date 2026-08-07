@@ -181,13 +181,25 @@ abstract class MahjongPlayerBase {
         }
     }
 
+    private fun isSingleWaitBeforeWin(winningTile: MahjongTile, isWinningTileInHands: Boolean): Boolean {
+        val waitingHand = hands.toMutableList()
+        if (isWinningTileInHands) {
+            val index = waitingHand.indexOfLast { it == winningTile }
+            if (index < 0) return false
+            waitingHand.removeAt(index)
+        }
+        val waits = calculateMachi(waitingHand).distinct()
+        return waits.size == 1 && waits.first() == winningTile
+    }
+
     fun calculateMachiAndTai(
         rule: MahjongRule,
         roundWind: Wind,
         seatWind: Wind,
-        handsForWait: List<MahjongTile> = hands
+        handsForWait: List<MahjongTile> = hands,
+        context: TaiwanWinContext = TaiwanWinContext(),
     ): Map<MahjongTile, Int> = calculateMachi(handsForWait).associateWith { tile ->
-        bestSettlement(tile, false, rule, roundWind, seatWind).tai
+        bestSettlement(tile, false, rule, roundWind, seatWind, context = context).tai
     }
 
     fun canWin(
@@ -196,12 +208,21 @@ abstract class MahjongPlayerBase {
         rule: MahjongRule,
         roundWind: Wind,
         seatWind: Wind,
-        isTsumo: Boolean = false
+        isTsumo: Boolean = false,
+        context: TaiwanWinContext = TaiwanWinContext(),
     ): Boolean {
-        val settlement = bestSettlement(winningTile, isWinningTileInHands, rule, roundWind, seatWind, isTsumo)
+        val settlement = bestSettlement(
+            winningTile,
+            isWinningTileInHands,
+            rule,
+            roundWind,
+            seatWind,
+            isTsumo,
+            context,
+        )
         return settlement.tai >= rule.minimumTai.tai && TaiwaneseHandEvaluator.canWin(
             (hands + if (isWinningTileInHands) emptyList() else listOf(winningTile)),
-            fuuroList
+            fuuroList,
         )
     }
 
@@ -211,8 +232,17 @@ abstract class MahjongPlayerBase {
         rule: MahjongRule,
         roundWind: Wind,
         seatWind: Wind,
-        isTsumo: Boolean
-    ): TaiwanSettlement = bestSettlement(winningTile, isWinningTileInHands, rule, roundWind, seatWind, isTsumo)
+        isTsumo: Boolean,
+        context: TaiwanWinContext = TaiwanWinContext(),
+    ): TaiwanSettlement = bestSettlement(
+        winningTile,
+        isWinningTileInHands,
+        rule,
+        roundWind,
+        seatWind,
+        isTsumo,
+        context,
+    )
 
     private fun bestSettlement(
         winningTile: MahjongTile,
@@ -220,11 +250,16 @@ abstract class MahjongPlayerBase {
         rule: MahjongRule,
         roundWind: Wind,
         seatWind: Wind,
-        isTsumo: Boolean = false
+        isTsumo: Boolean = false,
+        context: TaiwanWinContext = TaiwanWinContext(),
     ): TaiwanSettlement {
         val combined = hands.toMutableList().also { if (!isWinningTileInHands) it += winningTile }
         val shapes = TaiwaneseHandEvaluator.findWinningShapes(combined, fuuroList)
         if (shapes.isEmpty()) return TaiwanSettlement.NO_TAI
+
+        val effectiveContext = context.copy(
+            isSingleWait = context.isSingleWait || isSingleWaitBeforeWin(winningTile, isWinningTileInHands),
+        )
         return shapes.map { shape ->
             TaiwaneseScorer.score(
                 displayName = displayName,
@@ -241,6 +276,7 @@ abstract class MahjongPlayerBase {
                 roundWind = roundWind,
                 pointsPerTai = rule.pointsPerTai,
                 basePoints = rule.basePoints,
+                context = effectiveContext,
             )
         }.maxWithOrNull(compareBy<TaiwanSettlement> { it.tai }.thenBy { it.score }) ?: TaiwanSettlement.NO_TAI
     }
