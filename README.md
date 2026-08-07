@@ -47,3 +47,14 @@ mvn clean package
 TaiwaneseMahjong is a server-side Paper plugin for four-player Taiwanese 16-tile Mahjong. It includes a 144-tile wall with flower replacement, open melds, kongs, Taiwanese tai scoring, interactive 3D tile displays, and a Maven build.
 
 The game logic is kept separate from Bukkit where possible, and the rule core is covered by Kotlin tests under `src/test/kotlin`.
+
+## 自動發布 Release
+
+GitHub Actions 會在推送符合 `v*` 格式的版本標籤時，自動執行 Maven 測試與打包，並將 JAR 附加到 GitHub Release。
+
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+
+也可以在 GitHub 的 `Actions > Release > Run workflow` 手動輸入版本標籤觸發。
