@@ -31,6 +31,17 @@ class MahjongTableManager : GameRegistry {
     private val interruptedPlayers = ConcurrentHashMap.newKeySet<String>()
     private var dataFolder: File? = null
     private var loading = false
+    private var displayRepairTaskId: Int? = null
+
+    fun startDisplayRepairTask() {
+        if (displayRepairTaskId != null) return
+        displayRepairTaskId = Bukkit.getScheduler().runTaskTimer(
+            MahjongPlayPlugin.instance,
+            Runnable { tables.values.forEach { it.table.spawn() } },
+            100L,
+            100L,
+        ).taskId
+    }
 
     fun createTable(center: Location, creatorUUID: String, creatorName: String, gameLength: MahjongRule.GameLength = MahjongRule.GameLength.TWO_WIND, startingPoints: Int = 16000): MahjongTableSession {
         val game = MahjongGame(rule = MahjongRule(length = gameLength, playerCount = 4, startingPoints = startingPoints))
@@ -217,6 +228,8 @@ class MahjongTableManager : GameRegistry {
         tables.values.find { it.humanId == humanId }
 
     fun shutdown() {
+        displayRepairTaskId?.let { Bukkit.getScheduler().cancelTask(it) }
+        displayRepairTaskId = null
         tables.values.forEach { session ->
             if (session.game.status == GameStatus.PLAYING) {
                 session.game.end()

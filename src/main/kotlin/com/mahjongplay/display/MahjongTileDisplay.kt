@@ -134,6 +134,9 @@ class MahjongTileDisplay(
                     .addFloat((MahjongModelData.TILE_BASE + tile.code).toFloat())
                     .build()
             )
+            val meta = item.itemMeta
+            meta.setCustomModelData(MahjongModelData.TILE_BASE + tile.code)
+            item.itemMeta = meta
             return item
         }
     }

@@ -50,11 +50,16 @@ class BoardRenderer(
     companion object {
         private const val RAISE_OFFSET = 0.05
         private const val ACTION_BUTTON_SPACING = 0.55
+
+        // The custom table display starts at centerY + 0.75. Its green playing
+        // surface is the y=8..9 model element, scaled 1.5 around the 8-pixel
+        // item pivot: 0.75 + (1 / 16 * 1.5) = 0.84375 above centerY.
+        private const val TABLE_GREEN_TOP_OFFSET = 0.84375
     }
 
     private val world: World get() = tableCenter.world
 
-    private val surfaceY: Double get() = tableCenter.blockY + 1.0 + 1.0 / 16.0
+    private val surfaceY: Double get() = tableCenter.blockY + TABLE_GREEN_TOP_OFFSET
     private val standingTileY: Double get() = surfaceY + HEIGHT / 2.0
     private val flatTileY: Double get() = surfaceY + DEPTH / 2.0
 

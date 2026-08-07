@@ -19,15 +19,23 @@ class MahjongTableDisplay(
         private set
 
     fun spawn(): ItemDisplay {
-        entity?.takeIf { it.isValid }?.let { return it }
+        entity?.takeIf { it.isValid }?.let {
+            normalizeOrientation(it)
+            return it
+        }
         entity?.remove()
 
         val display = center.world.spawnEntity(displayLocation(center), EntityType.ITEM_DISPLAY) as ItemDisplay
-        display.isPersistent = false
+        // Keep the table entity across chunk saves.  The manager also repairs it
+        // periodically because other server cleanup/reload routines may remove
+        // display entities without touching the join text.
+        display.isPersistent = true
+        display.addScoreboardTag("taiwanese_mahjong_table")
         display.setViewRange(1.0f)
         display.setVisibleByDefault(true)
         display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE)
         display.setItemStack(createTableItem())
+        normalizeOrientation(display)
         applyTransform(display, yaw)
 
         entity = display
@@ -38,8 +46,18 @@ class MahjongTableDisplay(
         yaw = newYaw
         entity?.let { display ->
             display.teleport(displayLocation(newCenter))
+            normalizeOrientation(display)
             applyTransform(display, newYaw)
         }
+    }
+
+    /**
+     * The command's center Location can retain the creator's camera pitch/yaw.
+     * An ItemDisplay uses that entity rotation in addition to its transformation
+     * matrix, which can make the otherwise-horizontal table appear tilted.
+     */
+    fun normalizeOrientation(display: ItemDisplay? = entity) {
+        display?.setRotation(0f, 0f)
     }
 
     fun remove() {
@@ -48,7 +66,14 @@ class MahjongTableDisplay(
     }
 
     private fun displayLocation(base: Location): Location =
-        base.clone().add(0.0, TABLE_ORIGIN_Y_OFFSET.toDouble(), 0.0)
+        Location(
+            base.world,
+            base.x,
+            base.y + TABLE_ORIGIN_Y_OFFSET,
+            base.z,
+            0f,
+            0f,
+        )
 
     private fun applyTransform(display: ItemDisplay, displayYaw: Float) {
         val rotation = Quaternionf(
@@ -75,6 +100,11 @@ class MahjongTableDisplay(
                 .addFloat(MahjongModelData.TABLE.toFloat())
                 .build()
         )
+        // Keep the legacy integer component as well for clients routed through
+        // ViaVersion/older paper model override formats.
+        val meta = item.itemMeta
+        meta.setCustomModelData(MahjongModelData.TABLE)
+        item.itemMeta = meta
         return item
     }
 

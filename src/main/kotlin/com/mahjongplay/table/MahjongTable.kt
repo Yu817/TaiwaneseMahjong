@@ -31,14 +31,28 @@ class MahjongTable(val center: Location, val gameLengthText: String = "半庄", 
         private set
 
     fun spawn() {
-        if (tableDisplay?.entity?.isValid == true || joinTextDisplay?.isValid == true) {
+        val hasTableDisplay = tableDisplay?.entity?.isValid == true
+        val hasJoinDisplay = joinTextDisplay?.isValid == true
+        val hasJoinInteraction = joinInteraction?.isValid == true
+        if (hasTableDisplay && hasJoinDisplay && hasJoinInteraction) {
+            tableDisplay?.normalizeOrientation()
             return
         }
 
         spawnCollisionBlocks()
         spawnSeatSlabs()
-        tableDisplay = MahjongTableDisplay(center).also { it.spawn() }
-        spawnJoinDisplay()
+        clearLegacyTableSurface()
+
+        if (!hasTableDisplay) {
+            tableDisplay?.remove()
+            tableDisplay = MahjongTableDisplay(center).also { it.spawn() }
+        }
+
+        if (!hasJoinDisplay || !hasJoinInteraction) {
+            joinTextDisplay?.remove(); joinTextDisplay = null
+            joinInteraction?.remove(); joinInteraction = null
+            spawnJoinDisplay()
+        }
     }
 
     private fun spawnCollisionBlocks() {
@@ -72,6 +86,22 @@ class MahjongTable(val center: Location, val gameLengthText: String = "半庄", 
         location.block.type = material
         if (placedBlocks.none { sameBlock(it, location) }) {
             placedBlocks += location
+        }
+    }
+
+    private fun clearLegacyTableSurface() {
+        val world = center.world
+        val cx = center.blockX
+        val cy = center.blockY + 1
+        val cz = center.blockZ
+
+        for (dx in -1..1) {
+            for (dz in -1..1) {
+                val surface = world.getBlockAt(cx + dx, cy, cz + dz)
+                if (surface.type == Material.GREEN_CARPET || surface.type == Material.LIGHT_BLUE_CARPET) {
+                    surface.type = Material.AIR
+                }
+            }
         }
     }
 
@@ -220,5 +250,6 @@ class MahjongTable(val center: Location, val gameLengthText: String = "半庄", 
         removeEntities()
         placedBlocks.forEach { it.block.type = Material.AIR }
         placedBlocks.clear()
+        clearLegacyTableSurface()
     }
 }

@@ -28,6 +28,7 @@ class MahjongPlayPlugin : JavaPlugin(), Listener {
         instance = this
         glowingEntities = GlowingEntities(this)
         tableManager = MahjongTableManager()
+        tableManager.startDisplayRepairTask()
 
         getCommand("mahjong")?.let {
             val cmd = MahjongCommand(tableManager)
