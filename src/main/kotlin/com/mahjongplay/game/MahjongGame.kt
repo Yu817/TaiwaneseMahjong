@@ -63,7 +63,7 @@ class MahjongGame(
         get() = liveWall.size + supplementWall.size
 
     private val seatOrderFromDealer: List<MahjongPlayerBase>
-        // Seat indices are physically East, South, West, North.  Mahjong turns
+        // Seat indices are physically East, South, West, North. Mahjong turns
         // advance to the previous index so play moves counter-clockwise.
         get() = List(playerCount) {
             seat[(playerCount - ((round.round + it) % playerCount)) % playerCount]
@@ -294,7 +294,8 @@ class MahjongGame(
 
             if (needDraw) {
                 player.justDrewTile = true
-                val lastTile = if (isDealer && player.discardedTiles.isEmpty()) {
+                val initialDealerHand = isDealer && player.discardedTiles.isEmpty() && allDiscards.isEmpty()
+                val lastTile = if (initialDealerHand) {
                     player.hands.last()
                 } else {
                     val drawn = drawLiveFor(player)
@@ -311,12 +312,8 @@ class MahjongGame(
                 val normalTsumoContext = winContextFor(
                     player = player,
                     isTsumo = true,
-                    isLastLiveTile = !isDealer || player.discardedTiles.isNotEmpty() && liveWall.isEmpty(),
-                ).let { context ->
-                    // 莊家起手不是從活牌牆「摸」最後一張；一般摸牌才判斷海底。
-                    if (isDealer && player.discardedTiles.isEmpty()) context.copy(isLastLiveTile = false)
-                    else context.copy(isLastLiveTile = liveWall.isEmpty())
-                }
+                    isLastLiveTile = !initialDealerHand && liveWall.isEmpty(),
+                )
 
                 delayForBot(player)
                 if (
@@ -403,7 +400,7 @@ class MahjongGame(
 
             val discarderSeat = seat.indexOf(player)
             // The next player sees the discarder on the left as their upper
-            // player.  This project does not allow an open kan from that upper
+            // player. This project does not allow an open kan from that upper
             // player's discard; pon and ron remain available to every player.
             val nextPlayerSeat = nextSeatIndex(discarderSeat)
             val minkanList = players.filter {
@@ -539,6 +536,10 @@ class MahjongGame(
         )
     }
 
+    /** 莊家作為付款者時，莊家 1 台加上連 n 拉 n 的 2n 台。 */
+    private fun dealerLiabilityTai(player: MahjongPlayerBase): Int =
+        if (player == seatOrderFromDealer.firstOrNull()) 1 + round.honba * 2 else 0
+
     private suspend fun askRonList(
         tile: MahjongTile,
         target: MahjongPlayerBase,
@@ -596,8 +597,10 @@ class MahjongGame(
                 context = context,
             )
         }
-        // 連莊、拉莊已經直接列入台數，不再另外疊加舊 honba 固定點數。
-        val payment = settlements.map { it.score }
+        val dealerPayerTai = dealerLiabilityTai(target)
+        val payment = settlements.map { settlement ->
+            settlement.score + dealerPayerTai * rule.pointsPerTai
+        }
         val original = players.associateWith { it.points }
         forEachIndexed { index, winner ->
             winner.points += payment[index]
@@ -629,10 +632,8 @@ class MahjongGame(
         )
         val original = players.associateWith { it.points }
         var gain = 0
-        val dealer = seatOrderFromDealer[0]
         players.filter { it != this }.forEach { loser ->
-            var payment = settlement.score
-            if (this != dealer && loser == dealer) payment *= rule.dealerTsumoMultiplier
+            val payment = settlement.score + dealerLiabilityTai(loser) * rule.pointsPerTai
             loser.points -= payment
             gain += payment
         }
