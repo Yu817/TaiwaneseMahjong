@@ -16,11 +16,11 @@ import org.bukkit.entity.TextDisplay
 import java.util.UUID
 import kotlin.math.hypot
 
-// TextDisplay's visible glyphs sit above its entity origin. Keep each
-// Interaction box on the glyph row rather than below it, where the previous
-// box could be hit while the player was aiming at the next button.
-private const val SETTINGS_OPTION_INTERACTION_Y_OFFSET = 0.10
-private const val SETTINGS_OPTION_INTERACTION_HEIGHT = 0.30f
+// In the current Minecraft client TextDisplay glyphs render below the entity
+// origin. Place each Interaction box on the visible glyph row and keep a gap
+// between rows so aiming at one option cannot select the next option down.
+private const val SETTINGS_OPTION_INTERACTION_Y_OFFSET = -0.26
+private const val SETTINGS_OPTION_INTERACTION_HEIGHT = 0.20f
 
 data class SettingsMenuOption(
     val action: String,
@@ -84,6 +84,10 @@ class MahjongTable(
     private val settingsOptionLayouts = mutableListOf<Pair<Int, Int>>()
     private var actionButtonAnchor: Location? = null
     private var mainDisplayText: Component = Component.empty()
+    private var publicSettingsTextDisplay: TextDisplay? = null
+    private var publicSettingsText: Component? = null
+    private var turnTextDisplay: TextDisplay? = null
+    private var turnText: Component? = null
 
     fun spawn() {
         val hasTableDisplay = tableDisplay?.entity?.isValid == true
@@ -98,14 +102,22 @@ class MahjongTable(
             if (chairsEnabled) {
                 seatChairDisplays.forEach { it.spawn() }
             } else {
+                removeSeatSupportBlocks()
                 removeSeatChairs()
             }
+            repairPublicSettingsDisplay()
+            repairTurnDisplay()
             return
         }
 
         spawnCollisionBlocks()
-        spawnSeatSupportBlocks()
-        if (chairsEnabled) spawnSeatChairs() else removeSeatChairs()
+        if (chairsEnabled) {
+            spawnSeatSupportBlocks()
+            spawnSeatChairs()
+        } else {
+            removeSeatSupportBlocks()
+            removeSeatChairs()
+        }
         clearLegacyTableSurface()
 
         if (!hasTableDisplay) {
@@ -118,6 +130,8 @@ class MahjongTable(
             joinInteraction?.remove(); joinInteraction = null
             spawnJoinDisplay()
         }
+        repairPublicSettingsDisplay()
+        repairTurnDisplay()
     }
 
     private fun spawnCollisionBlocks() {
@@ -174,8 +188,8 @@ class MahjongTable(
 
     /**
      * Toggle the visible chairs and their exact barrier click targets.
-     * Invisible support blocks remain in place so disabling chairs cannot make
-     * the table edge unsafe, but they are no longer treated as seats.
+     * Disabling chairs removes both the display entities and their support
+     * barriers, so the old seat cannot remain as an invisible obstacle.
      */
     fun applyChairsEnabled(enabled: Boolean) {
         chairsEnabled = enabled
@@ -185,12 +199,28 @@ class MahjongTable(
         } else {
             releaseAllChairPassengers()
             removeSeatChairs()
+            removeSeatSupportBlocks()
         }
     }
 
     private fun removeSeatChairs() {
         seatChairDisplays.forEach { it.remove() }
         seatChairDisplays.clear()
+    }
+
+    private fun removeSeatSupportBlocks() {
+        val world = center.world
+        val cx = center.blockX
+        val cy = center.blockY
+        val cz = center.blockZ
+
+        seatOffsets.forEach { seat ->
+            val supportLoc = Location(world, (cx + seat.dx).toDouble(), cy.toDouble(), (cz + seat.dz).toDouble())
+            if (supportLoc.block.type == Material.BARRIER) {
+                supportLoc.block.type = Material.AIR
+            }
+            placedBlocks.removeIf { sameBlock(it, supportLoc) }
+        }
     }
 
     /**
@@ -210,6 +240,49 @@ class MahjongTable(
         if (!chairsEnabled) return false
         val index = chairIndexAt(blockLocation)
         return index >= 0 && seatChairDisplays.getOrNull(index)?.isOccupiedBy(playerUUID) == true
+    }
+
+    /**
+     * Location for the turn beacon at the outside edge of a physical chair.
+     * The renderer/game seat order is East, South, West, North, while the
+     * legacy chair list is East, North, West, South; map between them so the
+     * indicator follows the player and still appears at the correct corner.
+     *
+     * Keep the beacon just above the table top and move it slightly away from
+     * the table.  A beacon at the old low chair height was hidden by the table
+     * model, while a full block higher sat in the player's sight line.
+     */
+    fun turnIndicatorLocation(gameSeatIndex: Int): Location {
+        val seat = turnIndicatorSeat(gameSeatIndex)
+        val radialLength = hypot(seat.dx.toDouble(), seat.dz.toDouble())
+        val radialX = seat.dx / radialLength
+        val radialZ = seat.dz / radialLength
+        return Location(
+            center.world,
+            center.blockX + seat.dx + 0.5 + radialX * 0.35,
+            center.blockY + 1.02,
+            center.blockZ + seat.dz + 0.5 + radialZ * 0.35,
+        )
+    }
+
+    /** Horizontal tangent used to place the turn beacon as a vertical ring. */
+    fun turnIndicatorSideAxis(gameSeatIndex: Int): DoubleArray {
+        val seat = turnIndicatorSeat(gameSeatIndex)
+        val radialLength = hypot(seat.dx.toDouble(), seat.dz.toDouble())
+        val radialX = seat.dx / radialLength
+        val radialZ = seat.dz / radialLength
+        return doubleArrayOf(-radialZ, radialX)
+    }
+
+    private fun turnIndicatorSeat(gameSeatIndex: Int): SeatOffset {
+        val gameIndex = Math.floorMod(gameSeatIndex, seatOffsets.size)
+        val chairIndex = when (gameIndex) {
+            0 -> 0
+            1 -> 3
+            2 -> 2
+            else -> 1
+        }
+        return seatOffsets[chairIndex]
     }
 
     fun sitAtChair(blockLocation: Location, player: Player): Boolean {
@@ -632,6 +705,93 @@ class MahjongTable(
         )
     }
 
+    /**
+     * Keep a read-only settings summary in the world so every nearby player
+     * can see the same live rules while the owner edits them in a Dialog.
+     */
+    fun updatePublicSettingsDisplay(text: Component?) {
+        publicSettingsText = text
+        if (text == null) {
+            publicSettingsTextDisplay?.remove()
+            publicSettingsTextDisplay = null
+            return
+        }
+
+        val display = ensurePublicSettingsDisplay()
+        display.text(text)
+        display.teleport(publicSettingsDisplayLocation())
+    }
+
+    private fun repairPublicSettingsDisplay() {
+        val text = publicSettingsText ?: return
+        val display = ensurePublicSettingsDisplay()
+        display.text(text)
+        display.teleport(publicSettingsDisplayLocation())
+    }
+
+    private fun ensurePublicSettingsDisplay(): TextDisplay {
+        val current = publicSettingsTextDisplay
+        if (current?.isValid == true) return current
+
+        return (center.world.spawnEntity(publicSettingsDisplayLocation(), EntityType.TEXT_DISPLAY) as TextDisplay).apply {
+            isPersistent = false
+            billboard = Display.Billboard.CENTER
+            backgroundColor = Color.fromARGB(205, 10, 18, 28)
+            brightness = Display.Brightness(15, 15)
+            isSeeThrough = false
+            setViewRange(0.9f)
+            alignment = TextDisplay.TextAlignment.CENTER
+            publicSettingsTextDisplay = this
+        }
+    }
+
+    private fun publicSettingsDisplayLocation(): Location =
+        Location(center.world, center.x, center.blockY + 4.65, center.z)
+
+    /**
+     * Public read-only turn indicator.  It is deliberately a TextDisplay only;
+     * keeping it free of an Interaction entity prevents it from stealing clicks
+     * intended for tiles or the table controls.
+     */
+    fun updateTurnDisplay(text: Component?) {
+        turnText = text
+        if (text == null) {
+            turnTextDisplay?.remove()
+            turnTextDisplay = null
+            return
+        }
+
+        val display = ensureTurnDisplay()
+        display.text(text)
+        display.teleport(turnDisplayLocation())
+    }
+
+    private fun repairTurnDisplay() {
+        val text = turnText ?: return
+        val display = ensureTurnDisplay()
+        display.text(text)
+        display.teleport(turnDisplayLocation())
+    }
+
+    private fun ensureTurnDisplay(): TextDisplay {
+        val current = turnTextDisplay
+        if (current?.isValid == true) return current
+
+        return (center.world.spawnEntity(turnDisplayLocation(), EntityType.TEXT_DISPLAY) as TextDisplay).apply {
+            isPersistent = false
+            billboard = Display.Billboard.CENTER
+            backgroundColor = Color.fromARGB(220, 8, 18, 30)
+            brightness = Display.Brightness(15, 15)
+            isSeeThrough = false
+            setViewRange(0.9f)
+            alignment = TextDisplay.TextAlignment.CENTER
+            turnTextDisplay = this
+        }
+    }
+
+    private fun turnDisplayLocation(): Location =
+        Location(center.world, center.x, center.blockY + 3.65, center.z)
+
     fun isProtectedBlock(loc: Location): Boolean =
         placedBlocks.any { sameBlock(it, loc) }
 
@@ -641,6 +801,10 @@ class MahjongTable(
         removeSeatChairs()
         joinTextDisplay?.remove(); joinTextDisplay = null
         joinInteraction?.remove(); joinInteraction = null
+        publicSettingsTextDisplay?.remove(); publicSettingsTextDisplay = null
+        publicSettingsText = null
+        turnTextDisplay?.remove(); turnTextDisplay = null
+        turnText = null
         hideActionButtons()
     }
 

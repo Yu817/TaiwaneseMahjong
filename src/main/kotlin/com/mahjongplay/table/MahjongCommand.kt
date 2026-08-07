@@ -270,19 +270,12 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
         val isOwner = manager.isTableOwner(session, player.uniqueId.toString())
         if (args.size >= 3 && !isOwner) {
             player.msg("只有桌主可以修改設定；你可以查看目前設定，但不能更改。", NamedTextColor.RED)
-            manager.openSettingsMenu(session)
+            manager.openSettingsMenu(session, player)
             return
         }
 
         if (args.size < 3) {
-            player.msg("/mahjong settings rounds <1-16>      設定進度（1=1/4圈，16=4圈）", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings circles <1-4>     設定圈數（每圈4局）", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings bot <1-5秒>        Bot反應", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings base <分數>       設定底分", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings tai <分數>        設定每台分數", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings flowers <on/off>  開關花牌", NamedTextColor.YELLOW)
-            player.msg("/mahjong settings chairs <on/off>   開關椅子", NamedTextColor.YELLOW)
-            session.game.rule.toComponents().forEach { player.sendMessage(it) }
+            manager.openSettingsMenu(session, player)
             return
         }
 

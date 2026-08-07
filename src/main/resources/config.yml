@@ -14,7 +14,7 @@ defaults:
   # base-points: 0 會維持舊版只有台數計分的行為。
   base-points: 0
   points-per-tai: 1000
-  minimum-tai: ONE
+  minimum-tai: NONE
   thinking-time: NORMAL
   honba-points: 100
   dealer-tsumo-multiplier: 2

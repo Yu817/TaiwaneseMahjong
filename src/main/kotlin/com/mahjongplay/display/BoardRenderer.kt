@@ -49,9 +49,23 @@ class BoardRenderer(
     private val highlightedDiscards = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
 
     companion object {
-        private const val RAISE_OFFSET = 0.05
+        private const val RAISE_OFFSET = 0.10
+        // Keep each player's standing hand a little toward their screen-right
+        // so the outermost tile does not sit against the table leg/rim.
+        private const val HAND_RIGHT_OFFSET = 0.10
+        private const val DISCARD_HOVER_DISTANCE = 8.0
+        private const val DISCARD_HOVER_CENTER_TOLERANCE = 0.14
         private const val ACTION_BUTTON_MIN_SPACING = 1.25
         private const val ACTION_BUTTON_GAP = 0.35
+
+        // The green top ends at about 1.406 blocks from the centre after the
+        // table model scale is applied.  Keep the first meld tile near its
+        // corner, but leave enough margin for the tile model and the adjacent
+        // player's standing hand.
+        private const val FURO_CORNER_EDGE = 1.34
+        // Bring the melds close to the table feet/outer rim while keeping the
+        // tile model inside the green top (the green edge is about 1.406).
+        private const val FURO_RADIAL_OFFSET = 1.32
 
         // The custom table display starts at centerY + 0.75. Its green playing
         // surface is the y=8..9 model element, scaled 1.5 around the 8-pixel
@@ -187,7 +201,7 @@ class BoardRenderer(
         val perp = seatPerpendicular(seatIndex)
         val dirOffset = 0.85 + DEPTH + HEIGHT
         val totalWidth = tileCount * WIDTH + (tileCount - 1) * PADDING
-        val startOffset = totalWidth / 2.0
+        val startOffset = totalWidth / 2.0 - HAND_RIGHT_OFFSET
         val yaw = seatYaw(seatIndex)
         val isRealPlayer = player.isRealPlayer
 
@@ -228,31 +242,80 @@ class BoardRenderer(
         }, 1L)
     }
 
-    fun selectTileForDiscard(playerUUID: String, clickedIndex: Int): Boolean {
+    /**
+     * Refresh the tile under a player's crosshair while they are choosing a
+     * discard.  Entity-only ray tracing intentionally ignores the tabletop
+     * Barrier blocks, so the preview still works when the table is between the
+     * camera and the tile.
+     */
+    fun refreshDiscardHover(player: Player) {
+        val playerUUID = player.uniqueId.toString()
+        val mjPlayer = game.realPlayers.find { it.uuid == playerUUID }
+        val pending = mjPlayer?.pendingAction
+        if (mjPlayer == null || pending == null || MahjongGameBehavior.DISCARD !in pending.behaviors) {
+            previewTileForDiscard(playerUUID, null)
+            return
+        }
+
+        val ownerDisplays = handOwnerDisplays[playerUUID]
+        val eye = player.eyeLocation
+        val origin = eye.toVector()
+        val direction = eye.direction.normalize()
+        val toleranceSquared = DISCARD_HOVER_CENTER_TOLERANCE * DISCARD_HOVER_CENTER_TOLERANCE
+        val hoveredIndex = ownerDisplays
+            ?.mapIndexedNotNull { index, display ->
+                val point = display.interactionEntity?.location?.toVector() ?: return@mapIndexedNotNull null
+                val relative = point.clone().subtract(origin)
+                val along = relative.dot(direction)
+                if (along <= 0.0 || along > DISCARD_HOVER_DISTANCE) return@mapIndexedNotNull null
+
+                val closestPoint = origin.clone().add(direction.clone().multiply(along))
+                val distanceSquared = point.distanceSquared(closestPoint)
+                if (distanceSquared <= toleranceSquared) index to distanceSquared else null
+            }
+            ?.minByOrNull { it.second }
+            ?.first
+        previewTileForDiscard(playerUUID, hoveredIndex)
+    }
+
+    /** Preview only; the caller must use confirmTileForDiscard to discard. */
+    fun previewTileForDiscard(playerUUID: String, hoveredIndex: Int?) {
+        val displays = handOwnerDisplays[playerUUID]
+        val index = hoveredIndex?.takeIf { displays != null && it in displays.indices }
         val currentSelected = selectedTileIndices[playerUUID]
 
-        if (currentSelected == clickedIndex) {
-            selectedTileIndices.remove(playerUUID)
-            lowerTileAt(playerUUID, clickedIndex)
-            unhighlightDiscards(playerUUID)
-            return true
-        }
+        if (currentSelected == index) return
 
         if (currentSelected != null) {
             lowerTileAt(playerUUID, currentSelected)
         }
+        selectedTileIndices.remove(playerUUID)
+        unhighlightDiscards(playerUUID)
 
-        raiseTileAt(playerUUID, clickedIndex)
-        selectedTileIndices[playerUUID] = clickedIndex
+        if (index == null) return
+
+        raiseTileAt(playerUUID, index)
+        selectedTileIndices[playerUUID] = index
 
         val player = game.seat.find { it.uuid == playerUUID }
-        val tile = player?.hands?.getOrNull(clickedIndex)
-        if (tile != null) {
-            highlightMatchingDiscards(playerUUID, tile)
+        val tile = player?.hands?.getOrNull(index)
+        if (tile != null) highlightMatchingDiscards(playerUUID, tile)
+    }
+
+    /** Returns true only when the right-click confirms the currently previewed tile. */
+    fun confirmTileForDiscard(playerUUID: String, clickedIndex: Int): Boolean {
+        if (selectedTileIndices[playerUUID] != clickedIndex) {
+            previewTileForDiscard(playerUUID, clickedIndex)
+            return false
         }
 
-        return false
+        previewTileForDiscard(playerUUID, null)
+        return true
     }
+
+    /** Backwards-compatible entry point for callers that still select by click. */
+    fun selectTileForDiscard(playerUUID: String, clickedIndex: Int): Boolean =
+        confirmTileForDiscard(playerUUID, clickedIndex)
 
     private fun highlightMatchingDiscards(playerUUID: String, tile: MahjongTile) {
         unhighlightDiscards(playerUUID)
@@ -507,11 +570,11 @@ class BoardRenderer(
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val halfTable = 1.5
+        val halfTable = FURO_CORNER_EDGE
         val yaw = seatYaw(seatIndex)
         val tileGap = 0.0
 
-        val fuuroDirOffset = 0.85 + DEPTH + HEIGHT + HEIGHT + DEPTH * 2
+        val fuuroDirOffset = FURO_RADIAL_OFFSET
         var curX = tableCenter.x + dir[0] * fuuroDirOffset - perp[0] * halfTable
         var curZ = tableCenter.z + dir[1] * fuuroDirOffset - perp[1] * halfTable
 
@@ -730,7 +793,7 @@ class BoardRenderer(
         val yaw = seatYaw(seatIndex)
         val tileCount = player.hands.size
         val totalWidth = tileCount * WIDTH + (tileCount - 1) * PADDING
-        val startOffset = totalWidth / 2.0
+        val startOffset = totalWidth / 2.0 - HAND_RIGHT_OFFSET
 
         val revealed = mutableListOf<MahjongTileDisplay>()
 

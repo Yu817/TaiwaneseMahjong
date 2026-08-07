@@ -8,28 +8,107 @@ import com.mahjongplay.table.ChairInteractionResult
 import com.mahjongplay.table.MahjongTableManager
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import org.bukkit.Material
 import org.bukkit.entity.Interaction
+import org.bukkit.entity.Player
+import org.bukkit.event.entity.EntityDamageByEntityEvent
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
 import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
+import org.bukkit.event.player.PlayerAnimationEvent
+import org.bukkit.event.player.PlayerAnimationType
+import org.bukkit.event.player.PlayerMoveEvent
 import org.bukkit.inventory.EquipmentSlot
+import java.util.UUID
 
 class EntityInteractionListener(
     private val gameManager: MahjongTableManager
 ) : Listener {
 
+    /**
+     * A left click can raise several Bukkit events for the same arm swing
+     * (animation, interact, and sometimes entity damage). Keep the discard
+     * action single-shot while still cancelling all duplicate events.
+     */
+    private val recentLeftDiscardInputAt = mutableMapOf<UUID, Long>()
+
+    @EventHandler(ignoreCancelled = true)
+    fun onPlayerMove(event: PlayerMoveEvent) {
+        val to = event.to ?: return
+        if (event.from.yaw == to.yaw && event.from.pitch == to.pitch) return
+
+        val playerUUID = event.player.uniqueId.toString()
+        val game = gameManager.getGameForPlayer(playerUUID) ?: return
+        val renderer = gameManager.getRenderer(game) ?: return
+        renderer.refreshDiscardHover(event.player)
+    }
+
     @EventHandler
     fun onInteractBlock(event: PlayerInteractEvent) {
-        if (event.action != Action.RIGHT_CLICK_BLOCK) return
         if (event.hand != EquipmentSlot.HAND) return
 
         val block = event.clickedBlock ?: return
-        val chairResult = gameManager.handleChairBlockInteraction(event.player, block.location) ?: return
 
-        event.isCancelled = true
-        sendChairResult(event.player, chairResult)
+        if (event.action == Action.LEFT_CLICK_BLOCK) {
+            if (block.type == Material.BARRIER &&
+                gameManager.isProtectedBlock(block.location) &&
+                handleLeftTileInput(event.player)
+            ) {
+                event.isCancelled = true
+            }
+            return
+        }
+
+        if (event.action != Action.RIGHT_CLICK_BLOCK) return
+
+        val chairResult = gameManager.handleChairBlockInteraction(event.player, block.location)
+        if (chairResult != null) {
+            event.isCancelled = true
+            sendChairResult(event.player, chairResult)
+            return
+        }
+
+        if (block.type == Material.BARRIER &&
+            gameManager.isProtectedBlock(block.location) &&
+            handleBarrierTileDiscard(event.player)
+        ) {
+            event.isCancelled = true
+        }
+    }
+
+    @EventHandler
+    fun onInteractAir(event: PlayerInteractEvent) {
+        if (event.action != Action.LEFT_CLICK_AIR) return
+        if (event.hand != EquipmentSlot.HAND) return
+
+        if (handleLeftTileInput(event.player)) {
+            event.isCancelled = true
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    fun onLeftClickEntity(event: EntityDamageByEntityEvent) {
+        val player = event.damager as? Player ?: return
+        val clickedEntity = event.entity as? Interaction ?: return
+
+        if (handleLeftTileInput(player, clickedEntity)) {
+            event.isCancelled = true
+        }
+    }
+
+    /**
+     * PlayerAnimationEvent is the fallback for left-clicking an Interaction
+     * entity, because that click may not produce PlayerInteractEvent.
+     */
+    @EventHandler(ignoreCancelled = true)
+    fun onArmSwing(event: PlayerAnimationEvent) {
+        if (event.animationType != PlayerAnimationType.ARM_SWING) return
+
+        if (handleLeftTileInput(event.player)) {
+            event.isCancelled = true
+        }
     }
 
     @EventHandler
@@ -113,7 +192,7 @@ class EntityInteractionListener(
                 player.sendMessage(Component.text("[麻將] 遊戲進行中不能調整設定", NamedTextColor.RED))
                 return
             }
-            gameManager.openSettingsMenu(settingsSession)
+            gameManager.openSettingsMenu(settingsSession, player)
             return
         }
 
@@ -141,24 +220,66 @@ class EntityInteractionListener(
             return
         }
 
-        val pending = mjPlayer.pendingAction ?: return
+        if (handleTileDiscard(player, clickedEntity)) {
+            event.isCancelled = true
+        }
+    }
 
-        if (MahjongGameBehavior.DISCARD !in pending.behaviors) return
+    /**
+     * A tabletop Barrier can win the block ray trace before the card's
+     * Interaction entity. Re-run an entity-only ray trace so a card still
+     * receives the same discard click without weakening chair Barrier checks.
+     */
+    private fun handleBarrierTileDiscard(player: Player): Boolean {
+        val clickedEntity = player.world.rayTraceEntities(
+            player.eyeLocation,
+            player.eyeLocation.direction,
+            8.0,
+            0.08,
+        ) { entity -> entity is Interaction }?.hitEntity as? Interaction ?: return false
 
-        val ownerDisplays = renderer.handOwnerDisplays[mjPlayer.uuid] ?: return
+        return handleTileDiscard(player, clickedEntity)
+    }
 
+    private fun handleLeftTileInput(player: Player, clickedEntity: Interaction? = null): Boolean {
+        val now = System.currentTimeMillis()
+        val previous = recentLeftDiscardInputAt[player.uniqueId]
+        if (previous != null && now - previous < 150L) {
+            return true
+        }
+
+        val handled = if (clickedEntity != null) {
+            handleTileDiscard(player, clickedEntity)
+        } else {
+            handleBarrierTileDiscard(player)
+        }
+        if (handled) {
+            recentLeftDiscardInputAt[player.uniqueId] = now
+        }
+        return handled
+    }
+
+    private fun handleTileDiscard(player: Player, clickedEntity: Interaction): Boolean {
+        val playerUUID = player.uniqueId.toString()
+        val game = gameManager.getGameForPlayer(playerUUID) ?: return false
+        val mjPlayer = game.realPlayers.find { it.uuid == playerUUID } as? MahjongPlayer ?: return false
+        val renderer = gameManager.getRenderer(game) ?: return false
+        val pending = mjPlayer.pendingAction ?: return false
+
+        if (MahjongGameBehavior.DISCARD !in pending.behaviors) return false
+
+        val ownerDisplays = renderer.handOwnerDisplays[mjPlayer.uuid] ?: return false
         val clickedIndex = ownerDisplays.indexOfFirst {
             it.interactionEntity?.uniqueId == clickedEntity.uniqueId
         }
-        if (clickedIndex < 0) return
+        if (clickedIndex < 0) return false
 
-        val tile = mjPlayer.hands.getOrNull(clickedIndex) ?: return
-        event.isCancelled = true
-
-        val confirmed = renderer.selectTileForDiscard(mjPlayer.uuid, clickedIndex)
+        val tile = mjPlayer.hands.getOrNull(clickedIndex) ?: return false
+        val confirmed = renderer.confirmTileForDiscard(mjPlayer.uuid, clickedIndex)
         if (confirmed) {
             mjPlayer.resolveAction(MahjongGameBehavior.DISCARD, "${tile.code}")
         }
+        return true
     }
 
     private fun sendChairResult(player: org.bukkit.entity.Player, result: ChairInteractionResult) {

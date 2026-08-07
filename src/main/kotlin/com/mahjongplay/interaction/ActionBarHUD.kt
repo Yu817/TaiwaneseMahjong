@@ -50,7 +50,7 @@ object ActionBarHUD {
             val previewMachi = mjPlayer.previewMachiTiles.distinct().take(6)
             if (previewMachi.isNotEmpty()) {
                 bar = bar.append(
-                    Component.text("  │  聽牌 ${previewMachi.joinToString("、") { it.displayName }}", NamedTextColor.YELLOW)
+                    Component.text("  │  聽牌 ${previewMachi.joinToString("、") { machiDisplayName(it) }}", NamedTextColor.YELLOW)
                 )
             }
             player.sendActionBar(bar)
@@ -60,7 +60,15 @@ object ActionBarHUD {
     fun seatWindOf(game: MahjongGame, player: MahjongPlayerBase): Wind {
         val index = game.seat.indexOf(player)
         if (index < 0) return Wind.EAST
-        val seatOrderIndex = (game.round.round + index) % 4
+        val seatOrderIndex = (4 - ((game.round.round + index) % 4)) % 4
         return Wind.entries[seatOrderIndex]
+    }
+
+    /** Use Arabic numerals for numbered tiles so every client font shows them. */
+    private fun machiDisplayName(tile: com.mahjongplay.model.MahjongTile): String = when (tile.suit) {
+        com.mahjongplay.model.TileSuit.MAN -> "${tile.number}萬"
+        com.mahjongplay.model.TileSuit.PIN -> "${tile.number}筒"
+        com.mahjongplay.model.TileSuit.SOU -> "${tile.number}索"
+        else -> tile.displayName
     }
 }

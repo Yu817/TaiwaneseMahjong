@@ -16,7 +16,7 @@ data class MahjongRule(
     var thinkingTime: ThinkingTime = ThinkingTime.NORMAL,
     var startingPoints: Int = 16000,
     var minPointsToWin: Int = 0,
-    var minimumTai: MinimumTai = MinimumTai.ONE,
+    var minimumTai: MinimumTai = MinimumTai.NONE,
     var spectate: Boolean = true,
     // Number of non-dealer-repeat hands. 1 = 1/4 circle, 16 = a full 4-circle game.
     var roundsToPlay: Int = 16,

@@ -13,6 +13,7 @@ enum class GameStatus { WAITING, PLAYING }
 interface GameEventListener {
     fun onGameStart(game: MahjongGame) {}
     fun onRoundStart(game: MahjongGame, round: MahjongRound) {}
+    fun onTurnChanged(game: MahjongGame, player: MahjongPlayerBase) {}
     fun onTileDrawn(player: MahjongPlayerBase, tile: MahjongTile) {}
     fun onTileDiscarded(player: MahjongPlayerBase, tile: MahjongTile) {}
     fun onChii(player: MahjongPlayerBase, claimedTile: MahjongTile, from: MahjongPlayerBase) {}
@@ -61,7 +62,11 @@ class MahjongGame(
         get() = liveWall.size + supplementWall.size
 
     private val seatOrderFromDealer: List<MahjongPlayerBase>
-        get() = List(playerCount) { seat[(round.round + it) % playerCount] }
+        // Seat indices are physically East, South, West, North.  Mahjong turns
+        // advance to the previous index so play moves counter-clockwise.
+        get() = List(playerCount) {
+            seat[(playerCount - ((round.round + it) % playerCount)) % playerCount]
+        }
 
     private fun seatWindOf(player: MahjongPlayerBase): Wind {
         val index = seatOrderFromDealer.indexOf(player).coerceIn(0, Wind.entries.lastIndex)
@@ -241,18 +246,22 @@ class MahjongGame(
         val self = seat.indexOf(this)
         val targetIndex = seat.indexOf(target)
         return when ((targetIndex - self + playerCount) % playerCount) {
-            1 -> ClaimTarget.RIGHT
-            playerCount - 1 -> ClaimTarget.LEFT
+            playerCount - 1 -> ClaimTarget.RIGHT
+            1 -> ClaimTarget.LEFT
             else -> ClaimTarget.ACROSS
         }
     }
 
     private fun claimTargetBySeatDiff(claimerSeat: Int, discarderSeat: Int): ClaimTarget =
         when ((discarderSeat - claimerSeat + playerCount) % playerCount) {
-            1 -> ClaimTarget.RIGHT
-            playerCount - 1 -> ClaimTarget.LEFT
+            playerCount - 1 -> ClaimTarget.RIGHT
+            1 -> ClaimTarget.LEFT
             else -> ClaimTarget.ACROSS
         }
+
+    /** The player who acts after this seat in the counter-clockwise turn order. */
+    private fun nextSeatIndex(seatIndex: Int): Int =
+        (seatIndex - 1 + playerCount) % playerCount
 
     // --- Round loop ---
 
@@ -276,6 +285,7 @@ class MahjongGame(
         roundLoop@ while (isPlaying) {
             val player = nextPlayer
             currentPlayer = player
+            listener?.onTurnChanged(this, player)
             val isDealer = player == dealer
             var timeoutTile = player.hands.lastOrNull() ?: break@roundLoop
             var drewTile = false
@@ -343,10 +353,16 @@ class MahjongGame(
             }
 
             val discarderSeat = seat.indexOf(player)
-            val minkanList = players.filter { it != player && it.canMinkan(actualDiscard) }
+            // The next player sees the discarder on the left as their upper
+            // player.  This project does not allow an open kan from that upper
+            // player's discard; pon and ron remain available to every player.
+            val nextPlayerSeat = nextSeatIndex(discarderSeat)
+            val minkanList = players.filter {
+                it != player && seat.indexOf(it) != nextPlayerSeat && it.canMinkan(actualDiscard)
+            }
             var claimed = false
             if (minkanList.isNotEmpty() && supplementWall.isNotEmpty()) {
-                val claimant = minkanList.minBy { (seat.indexOf(it) - discarderSeat + playerCount) % playerCount }
+                val claimant = minkanList.minBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }
                 delayForBot(claimant)
                 if (claimant.askToMinkanOrPon(actualDiscard, claimant.asClaimTarget(player), rule) == MahjongGameBehavior.MINKAN) {
                     claimant.minkan(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
@@ -372,7 +388,7 @@ class MahjongGame(
 
             if (!claimed) {
                 val ponList = players.filter { it != player && it.canPon(actualDiscard) }
-                for (claimant in ponList.sortedBy { (seat.indexOf(it) - discarderSeat + playerCount) % playerCount }) {
+                for (claimant in ponList.sortedBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }) {
                     delayForBot(claimant)
                     if (claimant.askToPon(actualDiscard, claimant.getTilePairForPon(actualDiscard), claimant.asClaimTarget(player))) {
                         claimant.pon(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
@@ -387,7 +403,7 @@ class MahjongGame(
             }
 
             if (!claimed) {
-                val next = seat[(discarderSeat + 1) % playerCount]
+                val next = seat[nextPlayerSeat]
                 if (next.canChii(actualDiscard)) {
                     delayForBot(next)
                     val pairs = next.getTilePairsForChii(actualDiscard)
@@ -403,7 +419,7 @@ class MahjongGame(
                 }
             }
 
-            if (!claimed) nextPlayer = seat[(discarderSeat + 1) % playerCount]
+            if (!claimed) nextPlayer = seat[nextPlayerSeat]
             if (liveWall.isEmpty()) {
                 roundDraw = ExhaustiveDraw.NORMAL
                 break@roundLoop

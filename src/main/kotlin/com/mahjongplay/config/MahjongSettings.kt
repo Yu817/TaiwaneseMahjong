@@ -16,7 +16,7 @@ data class MahjongSettings(
     val defaultStartingPoints: Int = 16000,
     val defaultBasePoints: Int = 0,
     val defaultPointsPerTai: Int = 1000,
-    val defaultMinimumTai: MahjongRule.MinimumTai = MahjongRule.MinimumTai.ONE,
+    val defaultMinimumTai: MahjongRule.MinimumTai = MahjongRule.MinimumTai.NONE,
     val defaultThinkingTime: MahjongRule.ThinkingTime = MahjongRule.ThinkingTime.NORMAL,
     val defaultHonbaPoints: Int = 100,
     val defaultDealerTsumoMultiplier: Int = 2,
@@ -58,7 +58,7 @@ data class MahjongSettings(
             )
             val configuredMinimumTai = enumValue(
                 config.getString("defaults.minimum-tai"),
-                MahjongRule.MinimumTai.ONE,
+                MahjongRule.MinimumTai.NONE,
             )
             val configuredThinkingTime = enumValue(
                 config.getString("defaults.thinking-time"),
