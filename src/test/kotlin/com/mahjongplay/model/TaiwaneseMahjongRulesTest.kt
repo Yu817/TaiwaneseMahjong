@@ -38,7 +38,7 @@ class TaiwaneseMahjongRulesTest {
             MahjongTile.M7, MahjongTile.M8, MahjongTile.M9,
             MahjongTile.P1, MahjongTile.P2, MahjongTile.P3,
             MahjongTile.S1, MahjongTile.S2, MahjongTile.S3,
-            MahjongTile.EAST, MahjongTile.EAST
+            MahjongTile.EAST, MahjongTile.EAST,
         )
 
         val shapes = TaiwaneseHandEvaluator.findWinningShapes(winningHand, emptyList())
@@ -53,14 +53,14 @@ class TaiwaneseMahjongRulesTest {
             type = MeldType.TRIPLET,
             tiles = listOf(MahjongTile.RED_DRAGON, MahjongTile.RED_DRAGON, MahjongTile.RED_DRAGON),
             claimTarget = ClaimTarget.LEFT,
-            claimTile = MahjongTile.RED_DRAGON
+            claimTile = MahjongTile.RED_DRAGON,
         )
         val concealed = listOf(
             MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
             MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
             MahjongTile.P1, MahjongTile.P2, MahjongTile.P3,
             MahjongTile.S1, MahjongTile.S2, MahjongTile.S3,
-            MahjongTile.EAST, MahjongTile.EAST
+            MahjongTile.EAST, MahjongTile.EAST,
         )
 
         assertTrue(TaiwaneseHandEvaluator.canWin(concealed, listOf(openPon)))
@@ -124,9 +124,8 @@ class TaiwaneseMahjongRulesTest {
 
     @Test
     fun `five concealed triplets are detected`() {
-        val winningHand = fiveTripletHand()
         val settlement = score(
-            winningHand = winningHand,
+            winningHand = fiveTripletHand(),
             winningTile = MahjongTile.RED_DRAGON,
             isTsumo = true,
             seatWind = Wind.WEST,
@@ -139,9 +138,8 @@ class TaiwaneseMahjongRulesTest {
 
     @Test
     fun `triplet completed by ron is not counted as concealed`() {
-        val winningHand = fiveTripletHand()
         val settlement = score(
-            winningHand = winningHand,
+            winningHand = fiveTripletHand(),
             winningTile = MahjongTile.RED_DRAGON,
             isTsumo = false,
             seatWind = Wind.WEST,
@@ -176,59 +174,141 @@ class TaiwaneseMahjongRulesTest {
     }
 
     @Test
-    fun `last tile kong and first turn bonuses are represented in settlement`() {
-        val settlement = score(
-            winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M9,
+    fun `ping hu rejects tsumo and single wait`() {
+        val hand = pingHuHand()
+        val normal = score(hand, MahjongTile.S5, isTsumo = false)
+        val tsumo = score(hand, MahjongTile.S5, isTsumo = true)
+        val singleWait = score(
+            hand,
+            MahjongTile.S5,
+            isTsumo = false,
+            context = TaiwanWinContext(isSingleWait = true),
+        )
+
+        assertTrue(normal.taiList.any { it.name == "平胡" && it.tai == 2 })
+        assertFalse(tsumo.taiList.any { it.name == "平胡" })
+        assertFalse(singleWait.taiList.any { it.name == "平胡" })
+    }
+
+    @Test
+    fun `full ask is two tai and does not duplicate single wait`() {
+        val fuuro = fiveOpenSequences()
+        val pair = listOf(MahjongTile.P9, MahjongTile.P9)
+        val shape = TaiwaneseHandEvaluator.findWinningShapes(pair, fuuro).first()
+        val settlement = TaiwaneseScorer.score(
+            displayName = "test",
+            uuid = "test",
+            isRealPlayer = false,
+            botCode = MahjongTile.UNKNOWN.code,
+            concealedTiles = pair,
+            fuuroList = fuuro,
+            flowers = emptyList(),
+            shape = shape,
+            winningTile = MahjongTile.P9,
+            isTsumo = false,
+            seatWind = Wind.WEST,
+            roundWind = Wind.SOUTH,
+            pointsPerTai = 1000,
+            context = TaiwanWinContext(isSingleWait = true),
+        )
+
+        assertTrue(settlement.taiList.any { it.name == "全求人" && it.tai == 2 })
+        assertFalse(settlement.taiList.any { it.name == "獨聽" })
+    }
+
+    @Test
+    fun `half ask is scored on self draw with all groups exposed`() {
+        val fuuro = fiveOpenSequences()
+        val pair = listOf(MahjongTile.P9, MahjongTile.P9)
+        val shape = TaiwaneseHandEvaluator.findWinningShapes(pair, fuuro).first()
+        val settlement = TaiwaneseScorer.score(
+            displayName = "test",
+            uuid = "test",
+            isRealPlayer = false,
+            botCode = MahjongTile.UNKNOWN.code,
+            concealedTiles = pair,
+            fuuroList = fuuro,
+            flowers = emptyList(),
+            shape = shape,
+            winningTile = MahjongTile.P9,
+            isTsumo = true,
+            seatWind = Wind.WEST,
+            roundWind = Wind.SOUTH,
+            pointsPerTai = 1000,
+        )
+
+        assertTrue(settlement.taiList.any { it.name == "半求人" && it.tai == 1 })
+    }
+
+    @Test
+    fun `special first turn hands use common tai values`() {
+        val heavenly = score(
+            cleanOneSuitHand(),
+            MahjongTile.M9,
             isTsumo = true,
             seatWind = Wind.EAST,
-            context = TaiwanWinContext(
-                dealerRepeat = 1,
-                isSingleWait = true,
-                isLastLiveTile = true,
-                isKongReplacement = true,
-                isHeavenlyHand = true,
-            ),
+            context = TaiwanWinContext(isHeavenlyHand = true),
         )
-
-        assertTrue(settlement.taiList.any { it.name == "獨聽" && it.tai == 1 })
-        assertTrue(settlement.taiList.any { it.name == "海底撈月" && it.tai == 1 })
-        assertTrue(settlement.taiList.any { it.name == "槓上開花" && it.tai == 1 })
-        assertTrue(settlement.taiList.any { it.name == "天胡" && it.tai == 16 })
-    }
-
-    @Test
-    fun `robbing kong bonus is represented for ron`() {
-        val settlement = score(
-            winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M9,
-            isTsumo = false,
-            seatWind = Wind.WEST,
-            context = TaiwanWinContext(isRobbingKong = true),
+        val earthly = score(
+            cleanOneSuitHand(),
+            MahjongTile.M9,
+            isTsumo = true,
+            context = TaiwanWinContext(isEarthlyHand = true),
         )
-
-        assertTrue(settlement.taiList.any { it.name == "搶槓" && it.tai == 1 })
-    }
-
-    @Test
-    fun `human hand bonus is represented for first round ron`() {
-        val settlement = score(
-            winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M9,
-            isTsumo = false,
-            seatWind = Wind.WEST,
+        val human = score(
+            cleanOneSuitHand(),
+            MahjongTile.M9,
             context = TaiwanWinContext(isHumanHand = true),
         )
 
-        assertTrue(settlement.taiList.any { it.name == "人胡" && it.tai == 8 })
+        assertTrue(heavenly.taiList.any { it.name == "天胡" && it.tai == 24 })
+        assertTrue(earthly.taiList.any { it.name == "地胡" && it.tai == 16 })
+        assertTrue(human.taiList.any { it.name == "人胡" && it.tai == 8 })
+    }
+
+    @Test
+    fun `honor only hand scores sixteen tai for honor suit`() {
+        val settlement = score(
+            winningHand = honorOnlyHand(),
+            winningTile = MahjongTile.GREEN_DRAGON,
+            seatWind = Wind.WEST,
+        )
+
+        assertTrue(settlement.taiList.any { it.name == "字一色" && it.tai == 16 })
+    }
+
+    @Test
+    fun `last tile kong and robbing kong bonuses are represented`() {
+        val tsumo = score(
+            winningHand = cleanOneSuitHand(),
+            winningTile = MahjongTile.M9,
+            isTsumo = true,
+            context = TaiwanWinContext(
+                isLastLiveTile = true,
+                isKongReplacement = true,
+            ),
+        )
+        val ron = score(
+            winningHand = cleanOneSuitHand(),
+            winningTile = MahjongTile.M9,
+            context = TaiwanWinContext(
+                isLastLiveTile = true,
+                isRobbingKong = true,
+            ),
+        )
+
+        assertTrue(tsumo.taiList.any { it.name == "海底撈月" && it.tai == 1 })
+        assertTrue(tsumo.taiList.any { it.name == "槓上開花" && it.tai == 1 })
+        assertTrue(ron.taiList.any { it.name == "海底撈魚" && it.tai == 1 })
+        assertTrue(ron.taiList.any { it.name == "搶槓" && it.tai == 1 })
     }
 
     private fun cleanOneSuitHand(): List<MahjongTile> = listOf(
-        MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
-        MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
+        MahjongTile.M1, MahjongTile.M1, MahjongTile.M1,
+        MahjongTile.M2, MahjongTile.M3, MahjongTile.M4,
+        MahjongTile.M3, MahjongTile.M4, MahjongTile.M5,
         MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
-        MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
-        MahjongTile.M7, MahjongTile.M8, MahjongTile.M9,
+        MahjongTile.M6, MahjongTile.M7, MahjongTile.M8,
         MahjongTile.M9, MahjongTile.M9,
     )
 
@@ -239,6 +319,39 @@ class TaiwaneseMahjongRulesTest {
         MahjongTile.WHITE_DRAGON, MahjongTile.WHITE_DRAGON, MahjongTile.WHITE_DRAGON,
         MahjongTile.RED_DRAGON, MahjongTile.RED_DRAGON, MahjongTile.RED_DRAGON,
         MahjongTile.M5, MahjongTile.M5,
+    )
+
+    private fun honorOnlyHand(): List<MahjongTile> = listOf(
+        MahjongTile.EAST, MahjongTile.EAST, MahjongTile.EAST,
+        MahjongTile.SOUTH, MahjongTile.SOUTH, MahjongTile.SOUTH,
+        MahjongTile.WEST, MahjongTile.WEST, MahjongTile.WEST,
+        MahjongTile.NORTH, MahjongTile.NORTH, MahjongTile.NORTH,
+        MahjongTile.WHITE_DRAGON, MahjongTile.WHITE_DRAGON, MahjongTile.WHITE_DRAGON,
+        MahjongTile.GREEN_DRAGON, MahjongTile.GREEN_DRAGON,
+    )
+
+    private fun pingHuHand(): List<MahjongTile> = listOf(
+        MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
+        MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
+        MahjongTile.P2, MahjongTile.P3, MahjongTile.P4,
+        MahjongTile.P5, MahjongTile.P6, MahjongTile.P7,
+        MahjongTile.S6, MahjongTile.S7, MahjongTile.S8,
+        MahjongTile.S5, MahjongTile.S5,
+    )
+
+    private fun fiveOpenSequences(): List<Fuuro> = listOf(
+        sequenceFuuro(MahjongTile.M1, MahjongTile.M2, MahjongTile.M3),
+        sequenceFuuro(MahjongTile.M4, MahjongTile.M5, MahjongTile.M6),
+        sequenceFuuro(MahjongTile.P2, MahjongTile.P3, MahjongTile.P4),
+        sequenceFuuro(MahjongTile.P5, MahjongTile.P6, MahjongTile.P7),
+        sequenceFuuro(MahjongTile.S6, MahjongTile.S7, MahjongTile.S8),
+    )
+
+    private fun sequenceFuuro(a: MahjongTile, b: MahjongTile, c: MahjongTile): Fuuro = Fuuro(
+        type = MeldType.SEQUENCE,
+        tiles = listOf(a, b, c),
+        claimTarget = ClaimTarget.LEFT,
+        claimTile = c,
     )
 
     private fun score(
