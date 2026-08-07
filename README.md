@@ -51,10 +51,11 @@ itemsadder-content/
 └─ mahjongcraft/
    ├─ configs/
    │  ├─ items.yml
-   │  └─ table.yml
+   │  ├─ table.yml
+   │  └─ furniture.yml
    └─ resourcepack/assets/mahjongcraft/
-      ├─ models/
-      └─ textures/
+      ├─ models/item/mahjong_chair.json
+      └─ textures/item/mahjong_chair.png
 ```
 
 安裝方式：
@@ -68,7 +69,9 @@ itemsadder-content/
 
 - 麻將牌使用 `PAPER` 的 Custom Model Data `900001` 至 `900043`。
 - 麻將桌使用 `PAPER` 的 Custom Model Data `900044`。
+- 牌桌座椅使用 `PAPER` 的 Custom Model Data `900045`，項目 ID 為 `mahjongcraft:mahjong_chair`。
 - 麻將桌由插件以 `ItemDisplay` 顯示；ItemsAdder 僅負責模型路由與資源包合併。
+- 四個座位由插件以 `ItemDisplay` 顯示椅子；座位下方使用不可見的 `BARRIER` 作為碰撞支撐，不再顯示橡木半磚。
 - 請勿另外加入或合併 `assets/minecraft/items/paper.json`，避免覆蓋伺服器中其他使用 `PAPER` 的自訂物品。
 - 麻將桌尺寸與高度可在 `MahjongTableDisplay.kt` 的 `TABLE_SCALE`、`TABLE_ORIGIN_Y_OFFSET` 調整。
 - 第三方桌子模型與貼圖來源請見 `THIRD_PARTY_NOTICES.md`。

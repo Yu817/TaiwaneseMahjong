@@ -15,7 +15,8 @@ object TaiwaneseScorer {
         isTsumo: Boolean,
         seatWind: Wind,
         roundWind: Wind,
-        pointsPerTai: Int
+        pointsPerTai: Int,
+        basePoints: Int = 0
     ): TaiwanSettlement {
         val items = mutableListOf<TaiItem>()
         val allGroups = fuuroList.map { it.toHandGroup() } + shape.concealedGroups
@@ -113,7 +114,7 @@ object TaiwaneseScorer {
             hands = concealedTiles,
             fuuroList = fuuroForDisplay,
             tai = totalTai,
-            score = totalTai * pointsPerTai,
+            score = basePoints + totalTai * pointsPerTai,
             isTsumo = isTsumo
         )
     }

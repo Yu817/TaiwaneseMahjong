@@ -28,7 +28,8 @@ data class ActionDisplay(
     val behavior: MahjongGameBehavior,
     val data: String,
     val ownerUUID: String,
-    val subOptions: List<ActionDisplayOption>? = null
+    val subOptions: List<ActionDisplayOption>? = null,
+    val layoutSpacing: Double = 1.25,
 )
 
 class BoardRenderer(
@@ -49,7 +50,8 @@ class BoardRenderer(
 
     companion object {
         private const val RAISE_OFFSET = 0.05
-        private const val ACTION_BUTTON_SPACING = 0.55
+        private const val ACTION_BUTTON_MIN_SPACING = 1.25
+        private const val ACTION_BUTTON_GAP = 0.35
 
         // The custom table display starts at centerY + 0.75. Its green playing
         // surface is the y=8..9 model element, scaled 1.5 around the 8-pixel
@@ -68,14 +70,14 @@ class BoardRenderer(
 
     private fun seatYaw(seatIndex: Int): Float = when (physicalSeatIndex(seatIndex)) {
         0 -> 90f    // East: face toward -X (center)
-        3 -> 0f     // South: face toward -Z (center)
+        1 -> 0f     // South: face toward -Z (center)
         2 -> -90f   // West: face toward +X (center)
         else -> 180f // North: face toward +Z (center)
     }
 
     private fun seatDirection(seatIndex: Int): DoubleArray = when (physicalSeatIndex(seatIndex)) {
         0 -> doubleArrayOf(1.0, 0.0)
-        3 -> doubleArrayOf(0.0, 1.0)
+        1 -> doubleArrayOf(0.0, 1.0)
         2 -> doubleArrayOf(-1.0, 0.0)
         else -> doubleArrayOf(0.0, -1.0)
     }
@@ -83,9 +85,40 @@ class BoardRenderer(
     // Left-to-right direction from each player's perspective
     private fun seatPerpendicular(seatIndex: Int): DoubleArray = when (physicalSeatIndex(seatIndex)) {
         0 -> doubleArrayOf(0.0, 1.0)    // East: +Z to -Z (south to north)
-        3 -> doubleArrayOf(-1.0, 0.0)   // South: -X to +X (west to east)
+        1 -> doubleArrayOf(-1.0, 0.0)   // South: -X to +X (west to east)
         2 -> doubleArrayOf(0.0, -1.0)   // West: -Z to +Z (north to south)
         else -> doubleArrayOf(1.0, 0.0)  // North: +X to -X (east to west)
+    }
+
+    // Action options are placed along the player's screen-horizontal axis.
+    // Falling back to the seat axis keeps the layout stable if the player is
+    // temporarily offline or exactly at the table center.
+    private fun actionButtonBasis(player: Player?, seatIndex: Int): DoubleArray {
+        val fallbackDir = seatDirection(seatIndex)
+        val fallbackPerp = seatPerpendicular(seatIndex)
+        if (player == null || player.world != world) {
+            return doubleArrayOf(fallbackDir[0], fallbackDir[1], fallbackPerp[0], fallbackPerp[1])
+        }
+
+        val dx = player.location.x - tableCenter.x
+        val dz = player.location.z - tableCenter.z
+        val length = kotlin.math.hypot(dx, dz)
+        if (length < 0.01) {
+            return doubleArrayOf(fallbackDir[0], fallbackDir[1], fallbackPerp[0], fallbackPerp[1])
+        }
+
+        val radialX = dx / length
+        val radialZ = dz / length
+        return doubleArrayOf(radialX, radialZ, -radialZ, radialX)
+    }
+
+    private fun actionButtonSpacing(options: List<ActionDisplayOption>): Double {
+        val longestLabelWidth = options.maxOfOrNull { option ->
+            // Chinese glyphs and the bold display scale are deliberately given
+            // a conservative width so long "吃 ..." labels do not overlap.
+            option.label.codePoints().count().toDouble() * 0.24 + 0.25
+        } ?: 0.0
+        return maxOf(ACTION_BUTTON_MIN_SPACING, longestLabelWidth + ACTION_BUTTON_GAP)
     }
 
     override fun onRoundStart(game: MahjongGame, round: MahjongRound) {
@@ -131,9 +164,12 @@ class BoardRenderer(
     }
 
     override fun onGameEnd(game: MahjongGame, scoreList: List<ScoreItem>) {
-        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
-            clearAllDisplays()
-        })
+        val clearTask = Runnable { clearAllDisplays() }
+        if (MahjongPlayPlugin.instance.isEnabled) {
+            Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, clearTask)
+        } else {
+            clearTask.run()
+        }
     }
 
     fun renderHands(player: MahjongPlayerBase) {
@@ -287,21 +323,21 @@ class BoardRenderer(
     private fun spawnActionButtons(playerUUID: String, seatIndex: Int, options: List<ActionDisplayOption>) {
         clearActionOptions(playerUUID)
 
-        val dir = seatDirection(seatIndex)
-        val perp = seatPerpendicular(seatIndex)
+        val ownerBukkit = Bukkit.getPlayer(UUID.fromString(playerUUID))
+        val basis = actionButtonBasis(ownerBukkit, seatIndex)
         val dirOffset = 0.85 + DEPTH + HEIGHT + 0.1
         val actionY = surfaceY + HEIGHT + 0.65
 
-        val totalWidth = options.size * ACTION_BUTTON_SPACING
-        val startOffset = (totalWidth - ACTION_BUTTON_SPACING) / 2.0
+        val spacing = actionButtonSpacing(options)
+        val totalWidth = options.size * spacing
+        val startOffset = (totalWidth - spacing) / 2.0
 
         val displays = mutableListOf<ActionDisplay>()
-        val ownerBukkit = Bukkit.getPlayer(UUID.fromString(playerUUID))
 
         options.forEachIndexed { index, option ->
-            val offset = index * ACTION_BUTTON_SPACING
-            val x = tableCenter.x + dir[0] * dirOffset + perp[0] * (startOffset - offset)
-            val z = tableCenter.z + dir[1] * dirOffset + perp[1] * (startOffset - offset)
+            val offset = index * spacing
+            val x = tableCenter.x + basis[0] * dirOffset + basis[2] * (startOffset - offset)
+            val z = tableCenter.z + basis[1] * dirOffset + basis[3] * (startOffset - offset)
             val loc = Location(world, x, actionY, z)
 
             val textDisplay = world.spawnEntity(loc, EntityType.TEXT_DISPLAY) as TextDisplay
@@ -328,10 +364,48 @@ class BoardRenderer(
             interaction.interactionHeight = 0.4f
             interaction.isResponsive = false
 
-            displays += ActionDisplay(textDisplay, interaction, option.behavior, option.data, playerUUID, option.subOptions)
+            displays += ActionDisplay(
+                textDisplay,
+                interaction,
+                option.behavior,
+                option.data,
+                playerUUID,
+                option.subOptions,
+                spacing,
+            )
         }
 
         actionDisplays[playerUUID] = displays
+    }
+
+    /** Re-align pending action options to the owning player's current position. */
+    fun refreshActionButtons() {
+        actionDisplays.forEach { (playerUUID, displays) ->
+            val gamePlayer = game.seat.find { it.uuid == playerUUID } ?: return@forEach
+            val seatIndex = game.seat.indexOf(gamePlayer)
+            if (seatIndex < 0 || displays.isEmpty()) return@forEach
+
+            val ownerBukkit = runCatching { Bukkit.getPlayer(UUID.fromString(playerUUID)) }.getOrNull()
+                ?: return@forEach
+            val basis = actionButtonBasis(ownerBukkit, seatIndex)
+            val dirOffset = 0.85 + DEPTH + HEIGHT + 0.1
+            val actionY = surfaceY + HEIGHT + 0.65
+            val spacing = displays.first().layoutSpacing
+            val totalWidth = displays.size * spacing
+            val startOffset = (totalWidth - spacing) / 2.0
+
+            displays.forEachIndexed { index, action ->
+                if (!action.textDisplay.isValid || !action.interaction.isValid) return@forEachIndexed
+                val offset = index * spacing
+                val x = tableCenter.x + basis[0] * dirOffset + basis[2] * (startOffset - offset)
+                val z = tableCenter.z + basis[1] * dirOffset + basis[3] * (startOffset - offset)
+                val loc = Location(world, x, actionY, z)
+
+                action.textDisplay.billboard = Display.Billboard.CENTER
+                action.textDisplay.teleport(loc)
+                action.interaction.teleport(Location(world, x, actionY - 0.1, z))
+            }
+        }
     }
 
     fun expandSubMenu(playerUUID: String, subOptions: List<ActionDisplayOption>) {

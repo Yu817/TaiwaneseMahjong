@@ -18,7 +18,7 @@ data class MahjongRound(
         spentRounds++
     }
 
-    fun isAllLast(rule: MahjongRule): Boolean = (spentRounds + 1) >= rule.length.getRounds(rule.playerCount)
+    fun isAllLast(rule: MahjongRule): Boolean = (spentRounds + 1) >= rule.roundsToPlay
 
     fun displayName(): String = "${wind.displayName}${round + 1}局"
 }

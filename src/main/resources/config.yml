@@ -1,0 +1,26 @@
+# 台灣麻將新牌桌的預設設定。
+# 已經建立的牌桌會把自己的設定保存到 plugins/TaiwaneseMahjong/tables.yml。
+defaults:
+  # 預設一將為 4 圈（16 局）；快速模式可在牌桌設定選 1/4 圈。
+  game-length: TWO_WIND
+  rounds: 16
+
+  # Bot 每次作答前等待的毫秒數；目前設定面板提供 1-5 秒。
+  bot-response-ms: 1000
+
+  starting-points: 16000
+
+  # 結算公式：底分 + 台數 * 每台分數。
+  # base-points: 0 會維持舊版只有台數計分的行為。
+  base-points: 0
+  points-per-tai: 1000
+  minimum-tai: ONE
+  thinking-time: NORMAL
+  honba-points: 100
+  dealer-tsumo-multiplier: 2
+  flowers: true
+
+teleport:
+  enabled: true
+  # 玩家傳送到牌桌四側座位的距離（方塊）。
+  seat-distance: 2.0

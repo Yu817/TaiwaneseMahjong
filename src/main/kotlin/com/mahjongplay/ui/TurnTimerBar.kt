@@ -7,6 +7,7 @@ import com.mahjongplay.model.MahjongGameBehavior
 import net.kyori.adventure.bossbar.BossBar
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
 import java.util.UUID
 
@@ -17,14 +18,11 @@ class TurnTimerBar(private val game: MahjongGame) {
     private var startTimeMs: Long = 0
     private var durationMs: Long = 0
     private var activePlayerUUID: String? = null
-    private var activeActions: List<MahjongGameBehavior> = emptyList()
     private val shownPlayerUUIDs = mutableSetOf<UUID>()
-
-    private val windNames = listOf("東", "南", "西", "北")
 
     fun show() {
         if (bar != null) return
-        val b = BossBar.bossBar(buildTitle(0), 1.0f, BossBar.Color.GREEN, BossBar.Overlay.PROGRESS)
+        val b = BossBar.bossBar(buildTitle(), 1.0f, BossBar.Color.GREEN, BossBar.Overlay.PROGRESS)
         bar = b
         showToAll(b)
         startIdleUpdater()
@@ -41,31 +39,28 @@ class TurnTimerBar(private val game: MahjongGame) {
         bar = null
     }
 
-    fun startAction(player: MahjongPlayerBase, actions: List<MahjongGameBehavior>, totalSeconds: Int) {
+    fun startAction(player: MahjongPlayerBase, _actions: List<MahjongGameBehavior>, totalSeconds: Int) {
         cancelTimer()
         activePlayerUUID = player.uuid
-        activeActions = actions
         startTimeMs = System.currentTimeMillis()
         durationMs = totalSeconds * 1000L
 
         val b = bar ?: return
         b.progress(1.0f)
         b.color(BossBar.Color.GREEN)
-        b.name(buildTitle(totalSeconds))
+        b.name(buildTitle())
 
         timerTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(MahjongPlayPlugin.instance, {
             val elapsed = System.currentTimeMillis() - startTimeMs
             val remaining = (durationMs - elapsed).coerceAtLeast(0)
             val progress = (remaining.toFloat() / durationMs).coerceIn(0f, 1f)
-            val remainSec = (remaining / 1000).toInt()
-
             b.progress(progress)
             b.color(when {
                 progress > 0.5f -> BossBar.Color.GREEN
                 progress > 0.25f -> BossBar.Color.YELLOW
                 else -> BossBar.Color.RED
             })
-            b.name(buildTitle(remainSec))
+            b.name(buildTitle())
 
             if (remaining <= 0) endAction()
         }, 0L, 2L)
@@ -74,49 +69,23 @@ class TurnTimerBar(private val game: MahjongGame) {
     fun endAction() {
         cancelTimer()
         activePlayerUUID = null
-        activeActions = emptyList()
         bar?.let {
             it.progress(1.0f)
             it.color(BossBar.Color.GREEN)
-            it.name(buildTitle(0))
+            it.name(buildTitle())
         }
     }
 
-    private fun buildTitle(remainSec: Int): Component {
-        val pc = game.rule.playerCount
-        val seatOrder = if (game.seat.isEmpty()) emptyList()
-        else List(pc) { game.seat[(game.round.round + it) % pc] }
-
-        val round = game.round
-        var title = Component.text("${round.displayName()} ", NamedTextColor.GOLD)
-            .append(Component.text("牌山${game.wallSize} ", NamedTextColor.GREEN))
-            .append(Component.text("| ", NamedTextColor.DARK_GRAY))
-
-        seatOrder.forEachIndexed { idx, player ->
-            val wind = windNames.getOrElse(idx) { "?" }
-            val isActive = player.uuid == activePlayerUUID
-            val name = player.displayName
-
-            if (isActive) {
-                val secColor = if (remainSec <= 5) NamedTextColor.RED else NamedTextColor.WHITE
-                title = title
-                    .append(Component.text("$wind(", NamedTextColor.YELLOW))
-                    .append(Component.text(name, NamedTextColor.AQUA))
-                    .append(Component.text(") ", NamedTextColor.YELLOW))
-                    .append(Component.text("${remainSec}s", secColor))
-            } else {
-                title = title
-                    .append(Component.text("$wind(", NamedTextColor.GRAY))
-                    .append(Component.text(name, NamedTextColor.GRAY))
-                    .append(Component.text(")", NamedTextColor.GRAY))
-            }
-
-            if (idx < seatOrder.size - 1) {
-                title = title.append(Component.text(" | ", NamedTextColor.DARK_GRAY))
-            }
+    private fun buildTitle(): Component {
+        val activePlayer = activePlayerUUID?.let { uuid ->
+            game.players.firstOrNull { it.uuid == uuid }
         }
-
-        return title
+        return if (activePlayer == null) {
+            Component.text("麻將", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
+        } else {
+            Component.text("目前：${activePlayer.displayName} 出牌", NamedTextColor.AQUA)
+                .decorate(TextDecoration.BOLD)
+        }
     }
 
     private fun showToAll(b: BossBar) {
@@ -139,7 +108,7 @@ class TurnTimerBar(private val game: MahjongGame) {
     private fun startIdleUpdater() {
         idleTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(MahjongPlayPlugin.instance, {
             if (activePlayerUUID == null) {
-                bar?.name(buildTitle(0))
+                bar?.name(buildTitle())
             }
         }, 0L, 20L)
     }

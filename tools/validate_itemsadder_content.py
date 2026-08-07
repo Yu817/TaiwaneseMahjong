@@ -15,6 +15,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 PACK = PROJECT / "itemsadder-content" / "mahjongcraft"
 TILE_CONFIG = PACK / "configs" / "items.yml"
 TABLE_CONFIG = PACK / "configs" / "table.yml"
+FURNITURE_CONFIG = PACK / "configs" / "furniture.yml"
 RESOURCEPACK = PACK / "resourcepack"
 MODEL_ROOT = RESOURCEPACK / "assets" / "mahjongcraft" / "models" / "item"
 TEXTURE_ROOT = RESOURCEPACK / "assets" / "mahjongcraft" / "textures"
@@ -32,6 +33,7 @@ EXPECTED_TILE_ITEMS = [
 ]
 TILE_MODEL_DATA_BASE = 900001
 TABLE_MODEL_DATA = 900044
+CHAIR_MODEL_DATA = 900045
 
 
 def fail(message: str) -> None:
@@ -104,6 +106,19 @@ def validate_table_item(items: dict[str, dict[str, str | int]]) -> None:
         fail(f"mahjong_table: expected model_id {TABLE_MODEL_DATA}")
     if item.get("model_path") != "item/mahjong_table":
         fail("mahjong_table: model_path must be item/mahjong_table")
+
+
+def validate_chair_item(items: dict[str, dict[str, str | int]]) -> None:
+    if list(items) != ["mahjong_chair"]:
+        fail("furniture.yml must contain only the mahjong_chair item")
+
+    item = items["mahjong_chair"]
+    if item.get("material") != "PAPER":
+        fail("mahjong_chair: material must be PAPER")
+    if item.get("model_id") != CHAIR_MODEL_DATA:
+        fail(f"mahjong_chair: expected model_id {CHAIR_MODEL_DATA}")
+    if item.get("model_path") != "item/mahjong_chair":
+        fail("mahjong_chair: model_path must be item/mahjong_chair")
 
 
 def texture_file(texture_reference: str) -> Path:
@@ -192,10 +207,35 @@ def validate_table_model() -> None:
         fail("mahjong_table.json must retain the seven source model elements")
 
 
-def validate_model_data_mapping(tile_items: dict[str, dict[str, str | int]], table_items: dict[str, dict[str, str | int]]) -> None:
+def validate_chair_model() -> None:
+    model_file = MODEL_ROOT / "mahjong_chair.json"
+    texture_path = TEXTURE_ROOT / "item" / "mahjong_chair.png"
+    if not model_file.is_file():
+        fail(f"missing chair model {model_file.relative_to(PROJECT)}")
+    if not texture_path.is_file():
+        fail(f"missing chair texture {texture_path.relative_to(PROJECT)}")
+    validate_png(texture_path)
+
+    model = json.loads(model_file.read_text(encoding="utf-8"))
+    textures = model.get("textures", {})
+    expected_texture = "mahjongcraft:item/mahjong_chair"
+    if textures.get("0") != expected_texture:
+        fail("mahjong_chair.json texture 0 must use mahjongcraft:item/mahjong_chair")
+    if textures.get("particle") != expected_texture:
+        fail("mahjong_chair.json particle texture must use mahjongcraft:item/mahjong_chair")
+    if not model.get("elements"):
+        fail("mahjong_chair.json must retain the imported chair geometry")
+
+
+def validate_model_data_mapping(
+    tile_items: dict[str, dict[str, str | int]],
+    table_items: dict[str, dict[str, str | int]],
+    furniture_items: dict[str, dict[str, str | int]],
+) -> None:
     ids = [
         *(int(item["model_id"]) for item in tile_items.values()),
         *(int(item["model_id"]) for item in table_items.values()),
+        *(int(item["model_id"]) for item in furniture_items.values()),
     ]
     if len(ids) != len(set(ids)):
         fail("ItemsAdder model IDs must be unique")
@@ -207,6 +247,9 @@ def validate_model_data_mapping(tile_items: dict[str, dict[str, str | int]], tab
         fail(f"MahjongModelData.TILE_BASE must be {TILE_MODEL_DATA_BASE}")
     if not table_match or int(table_match.group(1)) != TABLE_MODEL_DATA:
         fail(f"MahjongModelData.TABLE must be {TABLE_MODEL_DATA}")
+    chair_match = re.search(r"const val CHAIR\s*=\s*(\d+)", source)
+    if not chair_match or int(chair_match.group(1)) != CHAIR_MODEL_DATA:
+        fail(f"MahjongModelData.CHAIR must be {CHAIR_MODEL_DATA}")
 
     tile_display = TILE_DISPLAY_SOURCE.read_text(encoding="utf-8")
     if "MahjongModelData.TILE_BASE + tile.code" not in tile_display:
@@ -229,11 +272,14 @@ def main() -> int:
     try:
         tile_items = parse_items_config(TILE_CONFIG)
         table_items = parse_items_config(TABLE_CONFIG)
+        furniture_items = parse_items_config(FURNITURE_CONFIG)
         validate_tile_items(tile_items)
         validate_table_item(table_items)
+        validate_chair_item(furniture_items)
         validate_tile_models()
         validate_table_model()
-        validate_model_data_mapping(tile_items, table_items)
+        validate_chair_model()
+        validate_model_data_mapping(tile_items, table_items, furniture_items)
         validate_layout()
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as error:
         print(f"ItemsAdder validation failed: {error}", file=sys.stderr)
@@ -242,8 +288,8 @@ def main() -> int:
     print(
         "ItemsAdder content valid: "
         f"{len(tile_items)} tiles using IDs {TILE_MODEL_DATA_BASE}-{TILE_MODEL_DATA_BASE + len(tile_items) - 1}, "
-        f"1 table using ID {TABLE_MODEL_DATA}, "
-        "46 tile child models and 1 table model"
+        f"1 table using ID {TABLE_MODEL_DATA}, 1 chair using ID {CHAIR_MODEL_DATA}, "
+        "46 tile child models, 1 table model and 1 chair model"
     )
     return 0
 

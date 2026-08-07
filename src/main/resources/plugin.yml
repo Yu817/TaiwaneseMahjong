@@ -8,7 +8,7 @@ authors:
 commands:
   mahjong:
     description: Mahjong game commands
-    usage: /mahjong <create|join|leave|ready|start|bot|destroy|info|list|action>
+    usage: /mahjong <create|join|leave|ready|start|bot|settings|destroy|info|list|action>
     aliases: [mj, majiang]
 permissions:
   mahjongplay.command.create:
@@ -29,6 +29,8 @@ permissions:
     description: 允許強制開始遊戲
   mahjongplay.command.bot:
     description: 允許新增機器人
+  mahjongplay.command.settings:
+    description: 允許調整麻將規則
   mahjongplay.command.kick:
     description: 允許踢出玩家
   mahjongplay.command.destroy:

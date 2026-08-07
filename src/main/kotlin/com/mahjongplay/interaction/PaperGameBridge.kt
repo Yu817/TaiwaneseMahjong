@@ -33,16 +33,43 @@ class PaperGameBridge(
         startHudUpdates()
         turnTimerBar.cleanup()
         turnTimerBar.show()
+
+        val seatTask = Runnable {
+            tableManager.getSession(game.tableId)?.table?.releaseAllChairPassengers()
+            tableManager.teleportPlayersToSeats(game)
+            forEachPlayer { player ->
+                val mjPlayer = game.realPlayers.find { it.uuid == player.uniqueId.toString() }
+                val wind = mjPlayer?.let { ActionBarHUD.seatWindOf(game, it) }
+                player.showTitle(
+                    Title.title(
+                        Component.text("${wind?.displayName ?: "?"}家", NamedTextColor.GOLD)
+                            .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
+                        Component.text("你的牌就在面前，準備開始！", NamedTextColor.GREEN),
+                        Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                    )
+                )
+            }
+            updateHud()
+        }
+        if (Bukkit.isPrimaryThread()) seatTask.run()
+        else Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, seatTask)
     }
 
     override fun onRoundStart(game: MahjongGame, round: MahjongRound) {
         renderer.onRoundStart(game, round)
-        val title = Title.title(
-            Component.text(round.displayName(), NamedTextColor.GOLD),
-            Component.text("連莊${round.honba}", NamedTextColor.YELLOW),
-            Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofMillis(500))
-        )
-        forEachPlayer { it.showTitle(title) }
+        forEachPlayer { player ->
+            val mjPlayer = game.realPlayers.find { it.uuid == player.uniqueId.toString() }
+            val wind = mjPlayer?.let { ActionBarHUD.seatWindOf(game, it) }
+            val title = Title.title(
+                Component.text(round.displayName(), NamedTextColor.GOLD),
+                Component.text(
+                    "${wind?.displayName ?: "?"}家  •  連莊${round.honba}  •  牌在你面前",
+                    NamedTextColor.YELLOW
+                ),
+                Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofMillis(500))
+            )
+            player.showTitle(title)
+        }
     }
 
     override fun onTileDrawn(player: MahjongPlayerBase, tile: MahjongTile) {
@@ -171,6 +198,7 @@ class PaperGameBridge(
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
             turnTimerBar.startAction(player, behaviors, timeoutSeconds)
             renderer.spawnActionOptions(player.uuid, player.actionOptions)
+            updateHud()
         })
     }
 
@@ -178,6 +206,7 @@ class PaperGameBridge(
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
             turnTimerBar.endAction()
             renderer.clearActionOptions(player.uuid)
+            updateHud()
         })
     }
 }

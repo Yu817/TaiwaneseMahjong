@@ -51,3 +51,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Japan Street v3 small chair model and texture
+
+The chair used for Mahjong table seats was imported from the server's existing
+ItemsAdder content pack:
+
+- Source item: `elitecreatures:japan_street_v3_small_chair`
+- Source model: `plugins/ItemsAdder/contents/elitecreatures_japan_streets/resourcepack/assets/elitecreatures/models/japan_street_v3/small_chair.json`
+- Source texture: `plugins/ItemsAdder/contents/elitecreatures_japan_streets/resourcepack/assets/elitecreatures/textures/japan_street_v3/smallchairtexture.png`
+
+The project copies the geometry and texture into its own `mahjongcraft`
+namespace, registers `mahjongcraft:mahjong_chair` as `PAPER` Custom Model Data
+`900045`, and removes the source namespace dependency from the model texture
+reference. The imported source folder does not include author or license
+metadata; redistribution rights for this asset should be confirmed separately.
+
+Project files:
+
+- `itemsadder-content/mahjongcraft/configs/furniture.yml`
+- `itemsadder-content/mahjongcraft/resourcepack/assets/mahjongcraft/models/item/mahjong_chair.json`
+- `itemsadder-content/mahjongcraft/resourcepack/assets/mahjongcraft/textures/item/mahjong_chair.png`

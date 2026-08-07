@@ -1,0 +1,31 @@
+info:
+  namespace: mahjongcraft
+
+items:
+  mahjong_chair:
+    display_name: "麻將座椅"
+    resource:
+      material: PAPER
+      model_id: 900045
+      generate: false
+      model_path: item/mahjong_chair
+    behaviours:
+      furniture:
+        solid: true
+        fixed_rotation: true
+        entity: armor_stand
+        hitbox:
+          length: 1
+          width: 1
+          height: 1
+          length_offset: 0
+          width_offset: 0
+          height_offset: 0
+        placeable_on:
+          walls: false
+          ceiling: false
+          floor: true
+      furniture_sit:
+        sit_height: 0.93
+        opposite_direction: true
+        sit_all_solid_blocks: true

@@ -2,34 +2,65 @@ package com.mahjongplay.interaction
 
 import com.mahjongplay.game.MahjongGame
 import com.mahjongplay.game.MahjongPlayerBase
+import com.mahjongplay.model.Wind
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
 import java.util.UUID
 
-/** 台麻 HUD：顯示圈局、牌山、分數、花牌與聽牌。 */
+/** Compact, readable status bar shown to each real player. */
 object ActionBarHUD {
     fun sendUpdate(game: MahjongGame) {
         game.realPlayers.forEach { mjPlayer ->
             val player = Bukkit.getPlayer(UUID.fromString(mjPlayer.uuid)) ?: return@forEach
             val seatWind = seatWindOf(game, mjPlayer)
-            val flowers = mjPlayer.flowerTiles.joinToString(",") { it.displayName }.ifEmpty { "無" }
-            var bar = Component.text(game.round.displayName(), NamedTextColor.GOLD)
-                .append(Component.text("|${seatWind.displayName}", NamedTextColor.AQUA))
-                .append(Component.text("|牌山${game.wallSize}", NamedTextColor.GREEN))
-                .append(Component.text("|${mjPlayer.points}分", NamedTextColor.WHITE))
-                .append(Component.text("|花:$flowers", NamedTextColor.LIGHT_PURPLE))
+            val current = game.currentPlayer
 
-            val previewMachi = mjPlayer.previewMachiTiles.distinct()
+            var bar = Component.text("麻將", NamedTextColor.GOLD)
+                .decorate(TextDecoration.BOLD)
+                .append(Component.text("  •  ${game.round.displayName()}", NamedTextColor.AQUA))
+                .append(Component.text("  •  ${seatWind.displayName}家", NamedTextColor.LIGHT_PURPLE))
+                .append(Component.text("  •  剩餘牌 ${game.wallSize}", NamedTextColor.GREEN))
+                .append(Component.text("  •  ${mjPlayer.points}分", NamedTextColor.WHITE))
+
+            if (game.round.honba > 0) {
+                bar = bar.append(Component.text("  •  連${game.round.honba}", NamedTextColor.YELLOW))
+            }
+            if (game.rule.flowersEnabled) {
+                bar = bar.append(Component.text("  •  花 ${mjPlayer.flowerTiles.size}", NamedTextColor.LIGHT_PURPLE))
+            }
+
+            val status = when {
+                mjPlayer.actionOptions.isNotEmpty() -> {
+                    val labels = mjPlayer.actionOptions
+                        .take(4)
+                        .joinToString("／") { it.label }
+                    Component.text("  │  請選擇：$labels", NamedTextColor.YELLOW)
+                        .decorate(TextDecoration.BOLD)
+                }
+                current?.uuid == mjPlayer.uuid ->
+                    Component.text("  │  ▶ 輪到你", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
+                current != null ->
+                    Component.text("  │  等待 ${current.displayName}", NamedTextColor.GRAY)
+                else -> Component.text("  │  準備發牌", NamedTextColor.GRAY)
+            }
+            bar = bar.append(status)
+
+            val previewMachi = mjPlayer.previewMachiTiles.distinct().take(6)
             if (previewMachi.isNotEmpty()) {
-                bar = bar.append(Component.text("|聽:${previewMachi.joinToString(",") { it.displayName }}", NamedTextColor.YELLOW))
+                bar = bar.append(
+                    Component.text("  │  聽牌 ${previewMachi.joinToString("、") { it.displayName }}", NamedTextColor.YELLOW)
+                )
             }
             player.sendActionBar(bar)
         }
     }
 
-    private fun seatWindOf(game: MahjongGame, player: MahjongPlayerBase): com.mahjongplay.model.Wind {
-        val seatOrder = List(4) { game.seat[(game.round.round + it) % 4] }
-        return com.mahjongplay.model.Wind.entries[seatOrder.indexOf(player).coerceIn(0, 3)]
+    fun seatWindOf(game: MahjongGame, player: MahjongPlayerBase): Wind {
+        val index = game.seat.indexOf(player)
+        if (index < 0) return Wind.EAST
+        val seatOrderIndex = (game.round.round + index) % 4
+        return Wind.entries[seatOrderIndex]
     }
 }

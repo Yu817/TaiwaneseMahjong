@@ -146,8 +146,10 @@ enum class MahjongTile : TextFormatting {
             addAll(flowerTiles)
         }
 
-        /** 舊版名稱保留給外部整合，但內容已經是台麻牌山。 */
-        val normalWall: List<MahjongTile> = taiwaneseWall
+        /** 不含花牌的 136 張牌山，供關閉花牌的牌局使用。 */
+        val normalWall: List<MahjongTile> = buildList {
+            basicTiles.forEach { tile -> repeat(4) { add(tile) } }
+        }
 
         fun random(): MahjongTile = basicTiles.random()
     }

@@ -239,7 +239,8 @@ abstract class MahjongPlayerBase {
                 isTsumo = isTsumo,
                 seatWind = seatWind,
                 roundWind = roundWind,
-                pointsPerTai = rule.pointsPerTai
+                pointsPerTai = rule.pointsPerTai,
+                basePoints = rule.basePoints,
             )
         }.maxWithOrNull(compareBy<TaiwanSettlement> { it.tai }.thenBy { it.score }) ?: TaiwanSettlement.NO_TAI
     }

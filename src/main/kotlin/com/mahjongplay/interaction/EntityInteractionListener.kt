@@ -4,25 +4,41 @@ import com.mahjongplay.game.GameStatus
 import com.mahjongplay.game.MahjongGame
 import com.mahjongplay.model.MahjongGameBehavior
 import com.mahjongplay.game.MahjongPlayer
+import com.mahjongplay.table.ChairInteractionResult
 import com.mahjongplay.table.MahjongTableManager
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.entity.Interaction
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
+import org.bukkit.event.block.Action
 import org.bukkit.event.player.PlayerInteractEntityEvent
+import org.bukkit.event.player.PlayerInteractEvent
+import org.bukkit.inventory.EquipmentSlot
 
 class EntityInteractionListener(
     private val gameManager: MahjongTableManager
 ) : Listener {
 
     @EventHandler
+    fun onInteractBlock(event: PlayerInteractEvent) {
+        if (event.action != Action.RIGHT_CLICK_BLOCK) return
+        if (event.hand != EquipmentSlot.HAND) return
+
+        val block = event.clickedBlock ?: return
+        val chairResult = gameManager.handleChairBlockInteraction(event.player, block.location) ?: return
+
+        event.isCancelled = true
+        sendChairResult(event.player, chairResult)
+    }
+
+    @EventHandler
     fun onInteractEntity(event: PlayerInteractEntityEvent) {
         val clickedEntity = event.rightClicked
-        if (clickedEntity !is Interaction) return
-
         val player = event.player
         val playerUUID = player.uniqueId.toString()
+
+        if (clickedEntity !is Interaction) return
 
         val joinSession = gameManager.getTableByJoinInteraction(clickedEntity.uniqueId)
         if (joinSession != null) {
@@ -90,6 +106,25 @@ class EntityInteractionListener(
             return
         }
 
+        val settingsSession = gameManager.getTableBySettingsInteraction(clickedEntity.uniqueId)
+        if (settingsSession != null) {
+            event.isCancelled = true
+            if (settingsSession.game.status != GameStatus.WAITING) {
+                player.sendMessage(Component.text("[麻將] 遊戲進行中不能調整設定", NamedTextColor.RED))
+                return
+            }
+            gameManager.openSettingsMenu(settingsSession)
+            return
+        }
+
+        val settingsTarget = gameManager.getSettingsOptionTarget(clickedEntity.uniqueId)
+        if (settingsTarget != null) {
+            event.isCancelled = true
+            val session = gameManager.getSession(settingsTarget.tableId) ?: return
+            gameManager.handleSettingsOption(session, playerUUID, settingsTarget.action)
+            return
+        }
+
         val game = gameManager.getGameForPlayer(playerUUID) ?: return
         val mjPlayer = game.realPlayers.find { it.uuid == playerUUID } as? MahjongPlayer ?: return
         val renderer = gameManager.getRenderer(game) ?: return
@@ -124,6 +159,17 @@ class EntityInteractionListener(
         if (confirmed) {
             mjPlayer.resolveAction(MahjongGameBehavior.DISCARD, "${tile.code}")
         }
+    }
+
+    private fun sendChairResult(player: org.bukkit.entity.Player, result: ChairInteractionResult) {
+        val (message, color) = when (result) {
+            ChairInteractionResult.SEATED -> "已坐到這張椅子，按 Shift 可起身。" to NamedTextColor.GREEN
+            ChairInteractionResult.OCCUPIED -> "這張椅子已經有人坐了。" to NamedTextColor.RED
+            ChairInteractionResult.OTHER_TABLE -> "你已經在另一張麻將桌。" to NamedTextColor.RED
+            ChairInteractionResult.TABLE_FULL -> "這張麻將桌已滿。" to NamedTextColor.RED
+            ChairInteractionResult.GAME_IN_PROGRESS -> "遊戲進行中，不能更換座位。" to NamedTextColor.YELLOW
+        }
+        player.sendMessage(Component.text("[麻將] $message", color))
     }
 }
 

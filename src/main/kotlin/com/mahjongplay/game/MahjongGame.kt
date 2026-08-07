@@ -38,6 +38,10 @@ class MahjongGame(
     var status = GameStatus.WAITING
         private set
 
+    @Volatile
+    var currentPlayer: MahjongPlayerBase? = null
+        private set
+
     private val isPlaying: Boolean get() = status == GameStatus.PLAYING
     private val playerCount: Int get() = 4
 
@@ -54,7 +58,7 @@ class MahjongGame(
     private var kanCount: Int = 0
 
     val wallSize: Int
-        get() = liveWall.size
+        get() = liveWall.size + supplementWall.size
 
     private val seatOrderFromDealer: List<MahjongPlayerBase>
         get() = List(playerCount) { seat[(round.round + it) % playerCount] }
@@ -118,6 +122,7 @@ class MahjongGame(
     fun start() {
         if (players.size != playerCount || !players.all { it.ready }) return
         status = GameStatus.PLAYING
+        currentPlayer = null
         seat = players.toMutableList().apply { shuffle() }
         round = rule.length.getStartingRound()
         players.forEach {
@@ -134,6 +139,7 @@ class MahjongGame(
 
     fun end() {
         status = GameStatus.WAITING
+        currentPlayer = null
         gameJob?.cancel()
         val scoreList = players.map { ScoreItem(it.displayName, it.uuid, it.isRealPlayer, scoreOrigin = it.points, scoreChange = 0) }
         listener?.onGameEnd(this, scoreList)
@@ -159,9 +165,17 @@ class MahjongGame(
     }
 
     private fun generateWall() {
-        val shuffled = MahjongTile.taiwaneseWall.shuffled()
+        val sourceWall = if (rule.flowersEnabled) MahjongTile.taiwaneseWall else MahjongTile.normalWall
+        val shuffled = sourceWall.shuffled()
         supplementWall = shuffled.takeLast(16).toMutableList()
         liveWall = shuffled.dropLast(16).toMutableList()
+    }
+
+    private suspend fun delayForBot(player: MahjongPlayerBase) {
+        if (player is MahjongBot) {
+            val delayMs = rule.botResponseDelayMs.coerceIn(0L, 5000L)
+            if (delayMs > 0L) delay(delayMs)
+        }
     }
 
     private fun drawFromSupplement(): MahjongTile? =
@@ -261,6 +275,7 @@ class MahjongGame(
 
         roundLoop@ while (isPlaying) {
             val player = nextPlayer
+            currentPlayer = player
             val isDealer = player == dealer
             var timeoutTile = player.hands.lastOrNull() ?: break@roundLoop
             var drewTile = false
@@ -281,7 +296,7 @@ class MahjongGame(
                 timeoutTile = lastTile
                 drewTile = true
 
-                if (player is MahjongBot) delay(150)
+                delayForBot(player)
                 if (player.canWin(lastTile, true, rule, round.wind, seatWindOf(player), isTsumo = true) && player.askToTsumo()) {
                     player.tsumo(lastTile)
                     dealerRemains = isDealer
@@ -290,6 +305,7 @@ class MahjongGame(
 
                 var replacement: MahjongTile? = null
                 while ((player.canKakan || player.canAnkan) && supplementWall.isNotEmpty()) {
+                    delayForBot(player)
                     val kanTile = player.askToAnkanOrKakan(player.tilesCanAnkan, player.tilesCanKakan, rule) ?: break
                     val isAnkan = kanTile in player.tilesCanAnkan
                     if (isAnkan) player.ankan(kanTile) else player.kakan(kanTile)
@@ -311,6 +327,7 @@ class MahjongGame(
                 drewTile = false
             }
 
+            if (!drewTile) delayForBot(player)
             val discarded = player.askToDiscardTile(timeoutTile, cannotDiscard, skippable = false)
             val actualDiscard = player.discardTile(discarded) ?: break@roundLoop
             allDiscards += actualDiscard
@@ -330,6 +347,7 @@ class MahjongGame(
             var claimed = false
             if (minkanList.isNotEmpty() && supplementWall.isNotEmpty()) {
                 val claimant = minkanList.minBy { (seat.indexOf(it) - discarderSeat + playerCount) % playerCount }
+                delayForBot(claimant)
                 if (claimant.askToMinkanOrPon(actualDiscard, claimant.asClaimTarget(player), rule) == MahjongGameBehavior.MINKAN) {
                     claimant.minkan(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
                     kanCount++
@@ -355,6 +373,7 @@ class MahjongGame(
             if (!claimed) {
                 val ponList = players.filter { it != player && it.canPon(actualDiscard) }
                 for (claimant in ponList.sortedBy { (seat.indexOf(it) - discarderSeat + playerCount) % playerCount }) {
+                    delayForBot(claimant)
                     if (claimant.askToPon(actualDiscard, claimant.getTilePairForPon(actualDiscard), claimant.asClaimTarget(player))) {
                         claimant.pon(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
                         listener?.onPon(claimant, actualDiscard, player)
@@ -370,6 +389,7 @@ class MahjongGame(
             if (!claimed) {
                 val next = seat[(discarderSeat + 1) % playerCount]
                 if (next.canChii(actualDiscard)) {
+                    delayForBot(next)
                     val pairs = next.getTilePairsForChii(actualDiscard)
                     val chosen = next.askToChii(actualDiscard, pairs, next.asClaimTarget(player))
                     if (chosen != null) {
@@ -398,7 +418,10 @@ class MahjongGame(
 
         delay(1200)
         if (!isPlaying) return
-        if (!round.isAllLast(rule)) {
+        // A dealer repeat does not consume the scheduled hand, including on
+        // the final hand of a selected circle count. The game ends only after
+        // the final scheduled hand finishes without a repeat.
+        if (!round.isAllLast(rule) || dealerRemains) {
             if (dealerRemains) {
                 round.honba++
             } else {
