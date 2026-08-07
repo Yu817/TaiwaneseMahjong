@@ -68,10 +68,9 @@ class TaiwaneseMahjongRulesTest {
 
     @Test
     fun `clean one suit is scored in tai instead of han`() {
-        val winningHand = cleanOneSuitHand()
         val settlement = score(
-            winningHand = winningHand,
-            winningTile = MahjongTile.M5,
+            winningHand = cleanOneSuitHand(),
+            winningTile = MahjongTile.M9,
             seatWind = Wind.WEST,
         )
 
@@ -84,7 +83,7 @@ class TaiwaneseMahjongRulesTest {
     fun `base points are added before tai points`() {
         val settlement = score(
             winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M5,
+            winningTile = MahjongTile.M9,
             seatWind = Wind.WEST,
             pointsPerTai = 10,
             basePoints = 30,
@@ -98,7 +97,7 @@ class TaiwaneseMahjongRulesTest {
     fun `dealer repeat and pull are counted as tai`() {
         val settlement = score(
             winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M5,
+            winningTile = MahjongTile.M9,
             seatWind = Wind.EAST,
             context = TaiwanWinContext(dealerRepeat = 2),
         )
@@ -113,7 +112,7 @@ class TaiwaneseMahjongRulesTest {
     fun `menzen tsumo scores the common three tai combination`() {
         val settlement = score(
             winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M5,
+            winningTile = MahjongTile.M9,
             isTsumo = true,
             seatWind = Wind.WEST,
         )
@@ -124,7 +123,7 @@ class TaiwaneseMahjongRulesTest {
     }
 
     @Test
-    fun `five concealed triplets are detected including closed kans`() {
+    fun `five concealed triplets are detected`() {
         val winningHand = fiveTripletHand()
         val settlement = score(
             winningHand = winningHand,
@@ -180,7 +179,7 @@ class TaiwaneseMahjongRulesTest {
     fun `last tile kong and first turn bonuses are represented in settlement`() {
         val settlement = score(
             winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M5,
+            winningTile = MahjongTile.M9,
             isTsumo = true,
             seatWind = Wind.EAST,
             context = TaiwanWinContext(
@@ -199,29 +198,38 @@ class TaiwaneseMahjongRulesTest {
     }
 
     @Test
-    fun `robbing kong and human hand bonuses are available for ron`() {
+    fun `robbing kong bonus is represented for ron`() {
         val settlement = score(
             winningHand = cleanOneSuitHand(),
-            winningTile = MahjongTile.M5,
+            winningTile = MahjongTile.M9,
             isTsumo = false,
             seatWind = Wind.WEST,
-            context = TaiwanWinContext(
-                isRobbingKong = true,
-                isHumanHand = true,
-            ),
+            context = TaiwanWinContext(isRobbingKong = true),
         )
 
         assertTrue(settlement.taiList.any { it.name == "搶槓" && it.tai == 1 })
+    }
+
+    @Test
+    fun `human hand bonus is represented for first round ron`() {
+        val settlement = score(
+            winningHand = cleanOneSuitHand(),
+            winningTile = MahjongTile.M9,
+            isTsumo = false,
+            seatWind = Wind.WEST,
+            context = TaiwanWinContext(isHumanHand = true),
+        )
+
         assertTrue(settlement.taiList.any { it.name == "人胡" && it.tai == 8 })
     }
 
     private fun cleanOneSuitHand(): List<MahjongTile> = listOf(
-        MahjongTile.M1, MahjongTile.M1, MahjongTile.M1,
-        MahjongTile.M2, MahjongTile.M2, MahjongTile.M2,
-        MahjongTile.M3, MahjongTile.M4, MahjongTile.M5,
-        MahjongTile.M6, MahjongTile.M7, MahjongTile.M8,
-        MahjongTile.M9, MahjongTile.M9, MahjongTile.M9,
-        MahjongTile.M5, MahjongTile.M5,
+        MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
+        MahjongTile.M1, MahjongTile.M2, MahjongTile.M3,
+        MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
+        MahjongTile.M4, MahjongTile.M5, MahjongTile.M6,
+        MahjongTile.M7, MahjongTile.M8, MahjongTile.M9,
+        MahjongTile.M9, MahjongTile.M9,
     )
 
     private fun fiveTripletHand(): List<MahjongTile> = listOf(
