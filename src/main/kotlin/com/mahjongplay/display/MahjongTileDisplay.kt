@@ -126,13 +126,17 @@ class MahjongTileDisplay(
     }
 
     companion object {
+        // Keep the Mahjong models outside the low Paper model-data range used by
+        // other server plugins and menus.
+        private const val MODEL_DATA_BASE = 900001
+
         @Suppress("UnstableApiUsage")
         fun createTileItem(tile: MahjongTile): ItemStack {
             val item = ItemStack(Material.PAPER)
             item.setData(
                 DataComponentTypes.CUSTOM_MODEL_DATA,
                 CustomModelData.customModelData()
-                    .addFloat((tile.code + 1).toFloat())
+                    .addFloat((MODEL_DATA_BASE + tile.code).toFloat())
                     .build()
             )
             return item
