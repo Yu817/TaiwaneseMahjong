@@ -57,6 +57,7 @@ class MahjongGame(
     private var supplementWall: MutableList<MahjongTile> = mutableListOf()
     private var allDiscards: MutableList<MahjongTile> = mutableListOf()
     private var kanCount: Int = 0
+    private var roundHadClaim: Boolean = false
 
     val wallSize: Int
         get() = liveWall.size + supplementWall.size
@@ -167,6 +168,7 @@ class MahjongGame(
         supplementWall.clear()
         allDiscards.clear()
         kanCount = 0
+        roundHadClaim = false
     }
 
     private fun generateWall() {
@@ -306,9 +308,29 @@ class MahjongGame(
                 timeoutTile = lastTile
                 drewTile = true
 
+                val normalTsumoContext = winContextFor(
+                    player = player,
+                    isTsumo = true,
+                    isLastLiveTile = !isDealer || player.discardedTiles.isNotEmpty() && liveWall.isEmpty(),
+                ).let { context ->
+                    // 莊家起手不是從活牌牆「摸」最後一張；一般摸牌才判斷海底。
+                    if (isDealer && player.discardedTiles.isEmpty()) context.copy(isLastLiveTile = false)
+                    else context.copy(isLastLiveTile = liveWall.isEmpty())
+                }
+
                 delayForBot(player)
-                if (player.canWin(lastTile, true, rule, round.wind, seatWindOf(player), isTsumo = true) && player.askToTsumo()) {
-                    player.tsumo(lastTile)
+                if (
+                    player.canWin(
+                        lastTile,
+                        true,
+                        rule,
+                        round.wind,
+                        seatWindOf(player),
+                        isTsumo = true,
+                        context = normalTsumoContext,
+                    ) && player.askToTsumo()
+                ) {
+                    player.tsumo(lastTile, normalTsumoContext)
                     dealerRemains = isDealer
                     break@roundLoop
                 }
@@ -318,14 +340,41 @@ class MahjongGame(
                     delayForBot(player)
                     val kanTile = player.askToAnkanOrKakan(player.tilesCanAnkan, player.tilesCanKakan, rule) ?: break
                     val isAnkan = kanTile in player.tilesCanAnkan
+
+                    // 加槓必須先給其他玩家搶槓機會；暗槓不開放一般搶槓。
+                    if (!isAnkan) {
+                        val robbers = askRonList(kanTile, player, isRobbingKong = true)
+                        if (robbers.isNotEmpty()) {
+                            robbers.ron(target = player, tile = kanTile, isRobbingKong = true)
+                            dealerRemains = dealer in robbers
+                            break@roundLoop
+                        }
+                    }
+
                     if (isAnkan) player.ankan(kanTile) else player.kakan(kanTile)
+                    roundHadClaim = true
                     kanCount++
                     listener?.onKan(player, kanTile, if (isAnkan) "ankan" else "kakan")
                     listener?.onHandsUpdated(player)
                     replacement = drawSupplementFor(player) ?: break
                     sortHands(player, replacement)
-                    if (player.canWin(replacement, true, rule, round.wind, seatWindOf(player), isTsumo = true) && player.askToTsumo()) {
-                        player.tsumo(replacement)
+                    val kongTsumoContext = winContextFor(
+                        player = player,
+                        isTsumo = true,
+                        isKongReplacement = true,
+                    )
+                    if (
+                        player.canWin(
+                            replacement,
+                            true,
+                            rule,
+                            round.wind,
+                            seatWindOf(player),
+                            isTsumo = true,
+                            context = kongTsumoContext,
+                        ) && player.askToTsumo()
+                    ) {
+                        player.tsumo(replacement, kongTsumoContext)
                         dealerRemains = isDealer
                         break@roundLoop
                     }
@@ -345,7 +394,7 @@ class MahjongGame(
             listener?.onHandsUpdated(player)
             cannotDiscard.clear()
 
-            val ronList = canRonList(actualDiscard, player)
+            val ronList = askRonList(actualDiscard, player)
             if (ronList.isNotEmpty()) {
                 ronList.ron(target = player, tile = actualDiscard)
                 dealerRemains = dealer in ronList
@@ -366,6 +415,7 @@ class MahjongGame(
                 delayForBot(claimant)
                 if (claimant.askToMinkanOrPon(actualDiscard, claimant.asClaimTarget(player), rule) == MahjongGameBehavior.MINKAN) {
                     claimant.minkan(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
+                    roundHadClaim = true
                     kanCount++
                     listener?.onKan(claimant, actualDiscard, "minkan", player)
                     listener?.onHandsUpdated(claimant)
@@ -375,8 +425,23 @@ class MahjongGame(
                         break@roundLoop
                     }
                     sortHands(claimant, replacement)
-                    if (claimant.canWin(replacement, true, rule, round.wind, seatWindOf(claimant), isTsumo = true) && claimant.askToTsumo()) {
-                        claimant.tsumo(replacement)
+                    val kongTsumoContext = winContextFor(
+                        player = claimant,
+                        isTsumo = true,
+                        isKongReplacement = true,
+                    )
+                    if (
+                        claimant.canWin(
+                            replacement,
+                            true,
+                            rule,
+                            round.wind,
+                            seatWindOf(claimant),
+                            isTsumo = true,
+                            context = kongTsumoContext,
+                        ) && claimant.askToTsumo()
+                    ) {
+                        claimant.tsumo(replacement, kongTsumoContext)
                         dealerRemains = claimant == dealer
                         break@roundLoop
                     }
@@ -392,6 +457,7 @@ class MahjongGame(
                     delayForBot(claimant)
                     if (claimant.askToPon(actualDiscard, claimant.getTilePairForPon(actualDiscard), claimant.asClaimTarget(player))) {
                         claimant.pon(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
+                        roundHadClaim = true
                         listener?.onPon(claimant, actualDiscard, player)
                         listener?.onHandsUpdated(claimant)
                         nextPlayer = claimant
@@ -410,6 +476,7 @@ class MahjongGame(
                     val chosen = next.askToChii(actualDiscard, pairs, next.asClaimTarget(player))
                     if (chosen != null) {
                         next.chii(actualDiscard, chosen, player)
+                        roundHadClaim = true
                         listener?.onChii(next, actualDiscard, player)
                         listener?.onHandsUpdated(next)
                         nextPlayer = next
@@ -451,14 +518,86 @@ class MahjongGame(
 
     // --- Win and settlement logic ---
 
-    private fun canRonList(tile: MahjongTile, discardedPlayer: MahjongPlayerBase): List<MahjongPlayerBase> =
-        players.filter { it != discardedPlayer && it.canWin(tile, false, rule, round.wind, seatWindOf(it), isTsumo = false) }
+    private fun winContextFor(
+        player: MahjongPlayerBase,
+        isTsumo: Boolean,
+        isLastLiveTile: Boolean = false,
+        isKongReplacement: Boolean = false,
+        isRobbingKong: Boolean = false,
+    ): TaiwanWinContext {
+        val dealer = seatOrderFromDealer.firstOrNull()
+        val isDealer = player == dealer
+        val firstUninterruptedTurn = player.discardedTiles.isEmpty() && !roundHadClaim
+        return TaiwanWinContext(
+            dealerRepeat = if (isDealer) round.honba else 0,
+            isLastLiveTile = isLastLiveTile,
+            isKongReplacement = isKongReplacement,
+            isRobbingKong = isRobbingKong,
+            isHeavenlyHand = isTsumo && isDealer && allDiscards.isEmpty() && !roundHadClaim && !isKongReplacement,
+            isEarthlyHand = isTsumo && !isDealer && firstUninterruptedTurn && !isKongReplacement,
+            isHumanHand = !isTsumo && !isDealer && firstUninterruptedTurn && !isRobbingKong,
+        )
+    }
 
-    private suspend fun List<MahjongPlayerBase>.ron(target: MahjongPlayerBase, tile: MahjongTile) {
-        val settlements = map {
-            it.calcTaiwanSettlementForWin(tile, false, rule, round.wind, seatWindOf(it), isTsumo = false)
+    private suspend fun askRonList(
+        tile: MahjongTile,
+        target: MahjongPlayerBase,
+        isRobbingKong: Boolean = false,
+    ): List<MahjongPlayerBase> {
+        val targetSeat = seat.indexOf(target)
+        val candidates = players
+            .filter { candidate ->
+                if (candidate == target) return@filter false
+                val context = winContextFor(
+                    player = candidate,
+                    isTsumo = false,
+                    isLastLiveTile = !isRobbingKong && liveWall.isEmpty(),
+                    isRobbingKong = isRobbingKong,
+                )
+                candidate.canWin(
+                    tile,
+                    false,
+                    rule,
+                    round.wind,
+                    seatWindOf(candidate),
+                    isTsumo = false,
+                    context = context,
+                )
+            }
+            .sortedBy { (targetSeat - seat.indexOf(it) + playerCount) % playerCount }
+
+        return buildList {
+            for (candidate in candidates) {
+                delayForBot(candidate)
+                if (candidate.askToRon(tile, candidate.asClaimTarget(target))) add(candidate)
+            }
         }
-        val payment = settlements.map { it.score + round.honba * rule.honbaPoints }
+    }
+
+    private suspend fun List<MahjongPlayerBase>.ron(
+        target: MahjongPlayerBase,
+        tile: MahjongTile,
+        isRobbingKong: Boolean = false,
+    ) {
+        val settlements = map { winner ->
+            val context = winContextFor(
+                player = winner,
+                isTsumo = false,
+                isLastLiveTile = !isRobbingKong && liveWall.isEmpty(),
+                isRobbingKong = isRobbingKong,
+            )
+            winner.calcTaiwanSettlementForWin(
+                tile,
+                false,
+                rule,
+                round.wind,
+                seatWindOf(winner),
+                isTsumo = false,
+                context = context,
+            )
+        }
+        // 連莊、拉莊已經直接列入台數，不再另外疊加舊 honba 固定點數。
+        val payment = settlements.map { it.score }
         val original = players.associateWith { it.points }
         forEachIndexed { index, winner ->
             winner.points += payment[index]
@@ -478,13 +617,21 @@ class MahjongGame(
         delay(SCORE_SETTLE_MS)
     }
 
-    private suspend fun MahjongPlayerBase.tsumo(tile: MahjongTile) {
-        val settlement = calcTaiwanSettlementForWin(tile, true, rule, round.wind, seatWindOf(this), isTsumo = true)
+    private suspend fun MahjongPlayerBase.tsumo(tile: MahjongTile, context: TaiwanWinContext) {
+        val settlement = calcTaiwanSettlementForWin(
+            tile,
+            true,
+            rule,
+            round.wind,
+            seatWindOf(this),
+            isTsumo = true,
+            context = context,
+        )
         val original = players.associateWith { it.points }
         var gain = 0
         val dealer = seatOrderFromDealer[0]
         players.filter { it != this }.forEach { loser ->
-            var payment = settlement.score + round.honba * rule.honbaPoints
+            var payment = settlement.score
             if (this != dealer && loser == dealer) payment *= rule.dealerTsumoMultiplier
             loser.points -= payment
             gain += payment
@@ -516,7 +663,11 @@ class MahjongGame(
 
     fun getMachiAndTai(player: MahjongPlayerBase): Map<MahjongTile, Int> {
         if (liveWall.isEmpty()) return emptyMap()
-        return player.calculateMachiAndTai(rule, round.wind, seatWindOf(player))
+        val seatWind = seatWindOf(player)
+        val context = TaiwanWinContext(
+            dealerRepeat = if (seatWind == Wind.EAST) round.honba else 0,
+        )
+        return player.calculateMachiAndTai(rule, round.wind, seatWind, context = context)
     }
 
     companion object {
