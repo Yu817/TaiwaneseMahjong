@@ -5,8 +5,8 @@ import com.mahjongplay.model.*
 /**
  * 台麻玩家共用狀態與牌操作。
  *
- * 16 張制的關鍵差異是：正常等待牌為 16 - 3 × 副露組數張，和牌為五組面子
- * 加一對將牌；花牌不留在手牌，而是放進 flowerTiles 並由牌山尾端補牌。
+ * 16 張制：等待牌為 16 - 3 × 副露組數張，和牌為五組面子加一對將牌。
+ * 花牌不留在手牌，而是放進 flowerTiles 並由牌山尾端補牌。
  */
 abstract class MahjongPlayerBase {
     abstract val uuid: String
@@ -22,10 +22,25 @@ abstract class MahjongPlayerBase {
     val discardedTilesForDisplay: MutableList<MahjongTile> = mutableListOf()
     var justDrewTile: Boolean = false
 
+    /**
+     * 過水：曾有合法胡牌機會卻選擇不胡。
+     * 採競技台麻常見規則，過水期間榮和與自摸都不可；自己合法打出一張牌後解除。
+     */
+    var passedWin: Boolean = false
+        private set
+
     open var ready: Boolean = false
     var points: Int = 0
     var basicThinkingTime = 0
     var extraThinkingTime = 0
+
+    fun markPassedWin() {
+        passedWin = true
+    }
+
+    fun clearPassedWin() {
+        passedWin = false
+    }
 
     fun chii(
         claimedTile: MahjongTile,
@@ -62,7 +77,7 @@ abstract class MahjongPlayerBase {
         onPon(this)
         val tiles = sameTilesInHands(claimedTile).take(2) + claimedTile
         if (tiles.size != 3) return
-        tiles.forEach { if (it != claimedTile || tiles.count { t -> t == claimedTile } > 1) hands.remove(it) }
+        repeat(2) { hands.remove(claimedTile) }
         target.discardedTilesForDisplay.remove(claimedTile)
         fuuroList += Fuuro(MeldType.TRIPLET, tiles, claimTarget, claimedTile)
     }
@@ -91,16 +106,24 @@ abstract class MahjongPlayerBase {
 
     fun kakan(tile: MahjongTile, onKakan: (MahjongPlayerBase) -> Unit = {}) {
         onKakan(this)
-        val index = fuuroList.indexOfFirst { it.type == MeldType.TRIPLET && it.tiles.any { t -> t == tile } }
+        val index = fuuroList.indexOfFirst {
+            it.type == MeldType.TRIPLET && it.tiles.any { t -> t == tile }
+        }
         if (index < 0) return
-        val old = fuuroList.removeAt(index)
+        val old = fuuroList[index]
         val extra = hands.find { it == tile } ?: return
         hands.remove(extra)
-        fuuroList.add(index, Fuuro(MeldType.KONG, old.tiles + extra, old.claimTarget, old.claimTile, isOpen = true, isAddedKong = true))
+        fuuroList[index] = Fuuro(
+            MeldType.KONG,
+            old.tiles + extra,
+            old.claimTarget,
+            old.claimTile,
+            isOpen = true,
+            isAddedKong = true,
+        )
     }
 
     fun canPon(tile: MahjongTile): Boolean = sameTilesInHands(tile).size >= 2
-
     fun canMinkan(tile: MahjongTile): Boolean = sameTilesInHands(tile).size >= 3
 
     val canKakan: Boolean
@@ -111,13 +134,17 @@ abstract class MahjongPlayerBase {
 
     fun canChii(tile: MahjongTile): Boolean = tilePairsForChii(tile).isNotEmpty()
 
-    private fun sameTilesInHands(tile: MahjongTile): List<MahjongTile> = hands.filter { it == tile }
+    private fun sameTilesInHands(tile: MahjongTile): List<MahjongTile> =
+        hands.filter { it == tile }
 
     private fun tilePairsForChii(tile: MahjongTile): List<Pair<MahjongTile, MahjongTile>> {
         if (!tile.isNumbered) return emptyList()
         val result = mutableListOf<Pair<MahjongTile, MahjongTile>>()
+
         fun handTile(suit: TileSuit, number: Int): MahjongTile? =
-            MahjongTile.basicTiles.find { it.suit == suit && it.number == number && it in hands }
+            MahjongTile.basicTiles.find {
+                it.suit == suit && it.number == number && it in hands
+            }
 
         if (tile.number <= 7) {
             val a = handTile(tile.suit, tile.number + 1)
@@ -137,7 +164,8 @@ abstract class MahjongPlayerBase {
         return result.distinct()
     }
 
-    fun getTilePairsForChii(tile: MahjongTile): List<Pair<MahjongTile, MahjongTile>> = tilePairsForChii(tile)
+    fun getTilePairsForChii(tile: MahjongTile): List<Pair<MahjongTile, MahjongTile>> =
+        tilePairsForChii(tile)
 
     fun getTilePairForPon(tile: MahjongTile): Pair<MahjongTile, MahjongTile> =
         sameTilesInHands(tile).take(2).let { it[0] to it[1] }
@@ -148,7 +176,9 @@ abstract class MahjongPlayerBase {
     val tilesCanKakan: Set<Pair<MahjongTile, ClaimTarget>>
         get() = buildSet {
             fuuroList.filter { it.type == MeldType.TRIPLET }.forEach { fuuro ->
-                hands.find { it == fuuro.claimTile }?.let { add(it to fuuro.claimTarget) }
+                hands.find { it == fuuro.claimTile }?.let {
+                    add(it to fuuro.claimTarget)
+                }
             }
         }
 
@@ -158,6 +188,7 @@ abstract class MahjongPlayerBase {
     val machiTiles: List<MahjongTile>
         get() = calculateMachi()
 
+    /** 僅供「打哪張後會聽什麼」預覽使用。 */
     val previewMachiTiles: List<MahjongTile>
         get() {
             val waitingSize = waitingHandSize()
@@ -174,14 +205,18 @@ abstract class MahjongPlayerBase {
     private fun waitingHandSize(): Int = 16 - fuuroList.size * 3
 
     private fun calculateMachi(handsForWait: List<MahjongTile> = hands): List<MahjongTile> {
-        if (handsForWait.size > waitingHandSize()) return emptyList()
+        if (handsForWait.size != waitingHandSize()) return emptyList()
         return MahjongTile.basicTiles.filter { tile ->
-            val used = handsForWait.count { it == tile } + fuuroList.sumOf { f -> f.tiles.count { it == tile } }
+            val used = handsForWait.count { it == tile } +
+                fuuroList.sumOf { f -> f.tiles.count { it == tile } }
             used < 4 && TaiwaneseHandEvaluator.canWin(handsForWait + tile, fuuroList)
         }
     }
 
-    private fun isSingleWaitBeforeWin(winningTile: MahjongTile, isWinningTileInHands: Boolean): Boolean {
+    private fun isSingleWaitBeforeWin(
+        winningTile: MahjongTile,
+        isWinningTileInHands: Boolean,
+    ): Boolean {
         val waitingHand = hands.toMutableList()
         if (isWinningTileInHands) {
             val index = waitingHand.indexOfLast { it == winningTile }
@@ -211,6 +246,11 @@ abstract class MahjongPlayerBase {
         isTsumo: Boolean = false,
         context: TaiwanWinContext = TaiwanWinContext(),
     ): Boolean {
+        if (passedWin) return false
+
+        val combined = hands + if (isWinningTileInHands) emptyList() else listOf(winningTile)
+        if (!TaiwaneseHandEvaluator.canWin(combined, fuuroList)) return false
+
         val settlement = bestSettlement(
             winningTile,
             isWinningTileInHands,
@@ -220,10 +260,7 @@ abstract class MahjongPlayerBase {
             isTsumo,
             context,
         )
-        return settlement.tai >= rule.minimumTai.tai && TaiwaneseHandEvaluator.canWin(
-            (hands + if (isWinningTileInHands) emptyList() else listOf(winningTile)),
-            fuuroList,
-        )
+        return settlement.tai >= rule.minimumTai.tai
     }
 
     fun calcTaiwanSettlementForWin(
@@ -253,12 +290,15 @@ abstract class MahjongPlayerBase {
         isTsumo: Boolean = false,
         context: TaiwanWinContext = TaiwanWinContext(),
     ): TaiwanSettlement {
-        val combined = hands.toMutableList().also { if (!isWinningTileInHands) it += winningTile }
+        val combined = hands.toMutableList().also {
+            if (!isWinningTileInHands) it += winningTile
+        }
         val shapes = TaiwaneseHandEvaluator.findWinningShapes(combined, fuuroList)
         if (shapes.isEmpty()) return TaiwanSettlement.NO_TAI
 
         val effectiveContext = context.copy(
-            isSingleWait = context.isSingleWait || isSingleWaitBeforeWin(winningTile, isWinningTileInHands),
+            isSingleWait = context.isSingleWait ||
+                isSingleWaitBeforeWin(winningTile, isWinningTileInHands),
         )
         return shapes.map { shape ->
             TaiwaneseScorer.score(
@@ -278,14 +318,17 @@ abstract class MahjongPlayerBase {
                 basePoints = rule.basePoints,
                 context = effectiveContext,
             )
-        }.maxWithOrNull(compareBy<TaiwanSettlement> { it.tai }.thenBy { it.score }) ?: TaiwanSettlement.NO_TAI
+        }.maxWithOrNull(compareBy<TaiwanSettlement> { it.tai }.thenBy { it.score })
+            ?: TaiwanSettlement.NO_TAI
     }
 
     open suspend fun askToDiscardTile(
         timeoutTile: MahjongTile,
         cannotDiscardTiles: List<MahjongTile>,
         skippable: Boolean
-    ): MahjongTile = hands.lastOrNull() ?: timeoutTile
+    ): MahjongTile = hands.lastOrNull { it !in cannotDiscardTiles }
+        ?: hands.lastOrNull()
+        ?: timeoutTile
 
     open suspend fun askToChii(
         tile: MahjongTile,
