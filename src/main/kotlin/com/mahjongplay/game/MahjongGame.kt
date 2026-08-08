@@ -29,7 +29,13 @@ interface GameEventListener {
 
 /**
  * 台灣麻將牌局流程：四人、16 張手牌、花牌即時補牌、五組面子加將牌。
- * Paper 顯示層只透過 GameEventListener 觀察這個類別，因此規則核心不依賴 Bukkit。
+ *
+ * 規則核心遵循常見台灣 16 張流程：
+ * - 莊家 17 張、閒家 16 張。
+ * - 牌牆保留鐵八墩（16 張）；補花／槓牌由尾端補牌並同步向前移動殘牌界線。
+ * - 胡 > 槓／碰 > 吃；吃只限上家。
+ * - 過水期間不得榮和或自摸，直到自己合法打出一張牌（或加槓）解除。
+ * - 流局時莊家續莊。
  */
 class MahjongGame(
     val tableId: UUID = UUID.randomUUID(),
@@ -58,13 +64,13 @@ class MahjongGame(
     private var allDiscards: MutableList<MahjongTile> = mutableListOf()
     private var kanCount: Int = 0
     private var roundHadClaim: Boolean = false
+    private var dealerOpeningTile: MahjongTile? = null
 
+    /** HUD 顯示仍可正常摸取的牌數，不把鐵八墩算進去。 */
     val wallSize: Int
-        get() = liveWall.size + supplementWall.size
+        get() = liveWall.size
 
     private val seatOrderFromDealer: List<MahjongPlayerBase>
-        // Seat indices are physically East, South, West, North. Mahjong turns
-        // advance to the previous index so play moves counter-clockwise.
         get() = List(playerCount) {
             seat[(playerCount - ((round.round + it) % playerCount)) % playerCount]
         }
@@ -75,11 +81,8 @@ class MahjongGame(
     }
 
     init {
-        // 台麻固定四人；舊 tables.yml 只沿用牌桌位置與局數設定。
         rule.playerCount = 4
     }
-
-    // --- Lifecycle ---
 
     fun addBot(name: String = "Bot") {
         if (players.size < playerCount) players += MahjongBot(displayName = name)
@@ -122,7 +125,9 @@ class MahjongGame(
     fun changeRules(newRule: MahjongRule) {
         newRule.playerCount = 4
         rule = newRule
-        players.forEachIndexed { index, player -> if (index != 0 && player is MahjongPlayer) player.ready = false }
+        players.forEachIndexed { index, player ->
+            if (index != 0 && player is MahjongPlayer) player.ready = false
+        }
     }
 
     fun start() {
@@ -147,14 +152,14 @@ class MahjongGame(
         status = GameStatus.WAITING
         currentPlayer = null
         gameJob?.cancel()
-        val scoreList = players.map { ScoreItem(it.displayName, it.uuid, it.isRealPlayer, scoreOrigin = it.points, scoreChange = 0) }
+        val scoreList = players.map {
+            ScoreItem(it.displayName, it.uuid, it.isRealPlayer, scoreOrigin = it.points, scoreChange = 0)
+        }
         listener?.onGameEnd(this, scoreList)
         seat.clear()
         clearRoundState()
         round = MahjongRound()
     }
-
-    // --- Wall and hand helpers ---
 
     private fun clearRoundState() {
         players.forEach {
@@ -163,19 +168,21 @@ class MahjongGame(
             it.flowerTiles.clear()
             it.discardedTiles.clear()
             it.discardedTilesForDisplay.clear()
+            it.clearPassedWin()
         }
         liveWall.clear()
         supplementWall.clear()
         allDiscards.clear()
         kanCount = 0
         roundHadClaim = false
+        dealerOpeningTile = null
     }
 
     private fun generateWall() {
         val sourceWall = if (rule.flowersEnabled) MahjongTile.taiwaneseWall else MahjongTile.normalWall
         val shuffled = sourceWall.shuffled()
-        supplementWall = shuffled.takeLast(16).toMutableList()
-        liveWall = shuffled.dropLast(16).toMutableList()
+        supplementWall = shuffled.takeLast(DEAD_WALL_SIZE).toMutableList()
+        liveWall = shuffled.dropLast(DEAD_WALL_SIZE).toMutableList()
     }
 
     private suspend fun delayForBot(player: MahjongPlayerBase) {
@@ -185,10 +192,19 @@ class MahjongGame(
         }
     }
 
-    private fun drawFromSupplement(): MahjongTile? =
-        if (supplementWall.isEmpty()) null else supplementWall.removeLast()
+    /**
+     * 從牌尾補牌。每補一張就把活牌牆最後一張移入殘牌區，
+     * 讓「鐵八墩」界線維持 16 張。
+     */
+    private fun drawFromSupplement(): MahjongTile? {
+        if (supplementWall.isEmpty()) return null
+        val tile = supplementWall.removeLast()
+        if (liveWall.isNotEmpty()) {
+            supplementWall.add(0, liveWall.removeLast())
+        }
+        return tile
+    }
 
-    /** 從補牌區拿到一張非花牌；途中抽到的花牌會立即登錄並繼續補牌。 */
     private fun drawSupplementFor(player: MahjongPlayerBase): MahjongTile? {
         while (supplementWall.isNotEmpty()) {
             val tile = drawFromSupplement() ?: return null
@@ -205,23 +221,29 @@ class MahjongGame(
         return null
     }
 
-    /** 從活牌區抽牌；花牌會移到花牌區，再從牌山尾端補牌。 */
-    private fun drawLiveFor(player: MahjongPlayerBase): MahjongTile? {
+    private data class DrawResult(
+        val tile: MahjongTile,
+        val wasFlowerReplacement: Boolean,
+    )
+
+    private fun drawLiveFor(player: MahjongPlayerBase): DrawResult? {
         while (liveWall.isNotEmpty()) {
             val tile = liveWall.removeFirst()
             if (tile.isFlower) {
                 player.flowerTiles += tile
                 listener?.onHandsUpdated(player)
-                return drawSupplementFor(player)
+                val replacement = drawSupplementFor(player) ?: return null
+                return DrawResult(replacement, wasFlowerReplacement = true)
             }
             player.drawTile(tile)
             listener?.onTileDrawn(player, tile)
             listener?.onHandsUpdated(player)
-            return tile
+            return DrawResult(tile, wasFlowerReplacement = false)
         }
         return null
     }
 
+    /** 四家各 16 張，莊家再拿第 17 張。 */
     private suspend fun dealHands() {
         val order = seatOrderFromDealer
         repeat(4) {
@@ -229,16 +251,20 @@ class MahjongGame(
                 repeat(4) { drawLiveFor(player) }
             }
         }
-        order.forEach { drawLiveFor(it) }
-        drawLiveFor(order[0])
+        dealerOpeningTile = drawLiveFor(order[0])?.tile
     }
 
     private fun sortHands(player: MahjongPlayerBase, lastTile: MahjongTile? = null) {
         if (!player.autoArrangeHands) return
         if (lastTile != null && player.hands.isNotEmpty()) {
-            val last = player.hands.removeLast()
-            player.hands.sortBy { it.sortOrder }
-            player.hands += last
+            val index = player.hands.indexOfLast { it == lastTile }
+            if (index >= 0) {
+                val drawn = player.hands.removeAt(index)
+                player.hands.sortBy { it.sortOrder }
+                player.hands += drawn
+            } else {
+                player.hands.sortBy { it.sortOrder }
+            }
         } else {
             player.hands.sortBy { it.sortOrder }
         }
@@ -261,11 +287,8 @@ class MahjongGame(
             else -> ClaimTarget.ACROSS
         }
 
-    /** The player who acts after this seat in the counter-clockwise turn order. */
     private fun nextSeatIndex(seatIndex: Int): Int =
         (seatIndex - 1 + playerCount) % playerCount
-
-    // --- Round loop ---
 
     private suspend fun startRound() {
         if (!isPlaying) return
@@ -282,7 +305,7 @@ class MahjongGame(
 
         var nextPlayer: MahjongPlayerBase = dealer
         var needDraw = true
-        val cannotDiscard = mutableListOf<MahjongTile>()
+        val cannotDiscard = mutableSetOf<MahjongTile>()
 
         roundLoop@ while (isPlaying) {
             val player = nextPlayer
@@ -291,28 +314,32 @@ class MahjongGame(
             val isDealer = player == dealer
             var timeoutTile = player.hands.lastOrNull() ?: break@roundLoop
             var drewTile = false
+            var lastDrawWasLastLiveTile = false
 
             if (needDraw) {
                 player.justDrewTile = true
                 val initialDealerHand = isDealer && player.discardedTiles.isEmpty() && allDiscards.isEmpty()
-                val lastTile = if (initialDealerHand) {
-                    player.hands.last()
+
+                val drawResult = if (initialDealerHand) {
+                    DrawResult(dealerOpeningTile ?: player.hands.last(), wasFlowerReplacement = false)
                 } else {
-                    val drawn = drawLiveFor(player)
-                    if (drawn == null) {
+                    drawLiveFor(player) ?: run {
                         roundDraw = ExhaustiveDraw.NORMAL
                         break@roundLoop
                     }
-                    drawn
                 }
+
+                val lastTile = drawResult.tile
                 sortHands(player, lastTile)
                 timeoutTile = lastTile
                 drewTile = true
+                lastDrawWasLastLiveTile = !initialDealerHand && !drawResult.wasFlowerReplacement && liveWall.isEmpty()
 
                 val normalTsumoContext = winContextFor(
                     player = player,
                     isTsumo = true,
-                    isLastLiveTile = !initialDealerHand && liveWall.isEmpty(),
+                    isLastLiveTile = lastDrawWasLastLiveTile,
+                    isFlowerReplacement = drawResult.wasFlowerReplacement,
                 )
 
                 delayForBot(player)
@@ -338,7 +365,6 @@ class MahjongGame(
                     val kanTile = player.askToAnkanOrKakan(player.tilesCanAnkan, player.tilesCanKakan, rule) ?: break
                     val isAnkan = kanTile in player.tilesCanAnkan
 
-                    // 加槓必須先給其他玩家搶槓機會；暗槓不開放一般搶槓。
                     if (!isAnkan) {
                         val robbers = askRonList(kanTile, player, isRobbingKong = true)
                         if (robbers.isNotEmpty()) {
@@ -346,6 +372,8 @@ class MahjongGame(
                             dealerRemains = dealer in robbers
                             break@roundLoop
                         }
+                        // 加槓視為打出一張非胡之牌，可解除過水。
+                        player.clearPassedWin()
                     }
 
                     if (isAnkan) player.ankan(kanTile) else player.kakan(kanTile)
@@ -384,8 +412,12 @@ class MahjongGame(
             }
 
             if (!drewTile) delayForBot(player)
-            val discarded = player.askToDiscardTile(timeoutTile, cannotDiscard, skippable = false)
-            val actualDiscard = player.discardTile(discarded) ?: break@roundLoop
+            val discarded = player.askToDiscardTile(timeoutTile, cannotDiscard.toList(), skippable = false)
+            val actualDiscard = player.discardTile(discarded)
+                ?: player.discardTile(player.hands.lastOrNull { it !in cannotDiscard } ?: break@roundLoop)
+                ?: break@roundLoop
+
+            player.clearPassedWin()
             allDiscards += actualDiscard
             listener?.onTileDiscarded(player, actualDiscard)
             listener?.onHandsUpdated(player)
@@ -398,65 +430,105 @@ class MahjongGame(
                 break@roundLoop
             }
 
-            val discarderSeat = seat.indexOf(player)
-            // The next player sees the discarder on the left as their upper
-            // player. This project does not allow an open kan from that upper
-            // player's discard; pon and ron remain available to every player.
-            val nextPlayerSeat = nextSeatIndex(discarderSeat)
-            val minkanList = players.filter {
-                it != player && seat.indexOf(it) != nextPlayerSeat && it.canMinkan(actualDiscard)
+            // 海底最後一張打出後只允許胡牌，不再展開吃／碰／槓。
+            if (lastDrawWasLastLiveTile || liveWall.isEmpty()) {
+                roundDraw = ExhaustiveDraw.NORMAL
+                break@roundLoop
             }
+
+            val discarderSeat = seat.indexOf(player)
+            val nextPlayerSeat = nextSeatIndex(discarderSeat)
             var claimed = false
+
+            // 明槓可對任何一家打出的第四張進行；若玩家選碰，同輪直接完成碰。
+            val minkanList = players
+                .filter { it != player && it.canMinkan(actualDiscard) }
+                .sortedBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }
+
             if (minkanList.isNotEmpty() && supplementWall.isNotEmpty()) {
-                val claimant = minkanList.minBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }
-                delayForBot(claimant)
-                if (claimant.askToMinkanOrPon(actualDiscard, claimant.asClaimTarget(player), rule) == MahjongGameBehavior.MINKAN) {
-                    claimant.minkan(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
-                    roundHadClaim = true
-                    kanCount++
-                    listener?.onKan(claimant, actualDiscard, "minkan", player)
-                    listener?.onHandsUpdated(claimant)
-                    val replacement = drawSupplementFor(claimant)
-                    if (replacement == null) {
-                        roundDraw = ExhaustiveDraw.NORMAL
-                        break@roundLoop
+                for (claimant in minkanList) {
+                    delayForBot(claimant)
+                    when (claimant.askToMinkanOrPon(actualDiscard, claimant.asClaimTarget(player), rule)) {
+                        MahjongGameBehavior.MINKAN -> {
+                            claimant.minkan(
+                                actualDiscard,
+                                claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat),
+                                player,
+                            )
+                            roundHadClaim = true
+                            kanCount++
+                            listener?.onKan(claimant, actualDiscard, "minkan", player)
+                            listener?.onHandsUpdated(claimant)
+
+                            val replacement = drawSupplementFor(claimant)
+                            if (replacement == null) {
+                                roundDraw = ExhaustiveDraw.NORMAL
+                                break@roundLoop
+                            }
+                            sortHands(claimant, replacement)
+                            val kongTsumoContext = winContextFor(
+                                player = claimant,
+                                isTsumo = true,
+                                isKongReplacement = true,
+                            )
+                            if (
+                                claimant.canWin(
+                                    replacement,
+                                    true,
+                                    rule,
+                                    round.wind,
+                                    seatWindOf(claimant),
+                                    isTsumo = true,
+                                    context = kongTsumoContext,
+                                ) && claimant.askToTsumo()
+                            ) {
+                                claimant.tsumo(replacement, kongTsumoContext)
+                                dealerRemains = claimant == dealer
+                                break@roundLoop
+                            }
+                            cannotDiscard += actualDiscard
+                            nextPlayer = claimant
+                            needDraw = false
+                            claimed = true
+                        }
+
+                        MahjongGameBehavior.PON -> {
+                            claimant.pon(
+                                actualDiscard,
+                                claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat),
+                                player,
+                            )
+                            roundHadClaim = true
+                            listener?.onPon(claimant, actualDiscard, player)
+                            listener?.onHandsUpdated(claimant)
+                            cannotDiscard += actualDiscard
+                            nextPlayer = claimant
+                            needDraw = false
+                            claimed = true
+                        }
+
+                        else -> Unit
                     }
-                    sortHands(claimant, replacement)
-                    val kongTsumoContext = winContextFor(
-                        player = claimant,
-                        isTsumo = true,
-                        isKongReplacement = true,
-                    )
-                    if (
-                        claimant.canWin(
-                            replacement,
-                            true,
-                            rule,
-                            round.wind,
-                            seatWindOf(claimant),
-                            isTsumo = true,
-                            context = kongTsumoContext,
-                        ) && claimant.askToTsumo()
-                    ) {
-                        claimant.tsumo(replacement, kongTsumoContext)
-                        dealerRemains = claimant == dealer
-                        break@roundLoop
-                    }
-                    nextPlayer = claimant
-                    needDraw = false
-                    claimed = true
+                    if (claimed) break
                 }
             }
 
             if (!claimed) {
-                val ponList = players.filter { it != player && it.canPon(actualDiscard) }
-                for (claimant in ponList.sortedBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }) {
+                val ponList = players
+                    .filter { it != player && it.canPon(actualDiscard) }
+                    .sortedBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }
+                for (claimant in ponList) {
                     delayForBot(claimant)
                     if (claimant.askToPon(actualDiscard, claimant.getTilePairForPon(actualDiscard), claimant.asClaimTarget(player))) {
-                        claimant.pon(actualDiscard, claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat), player)
+                        claimant.pon(
+                            actualDiscard,
+                            claimTargetBySeatDiff(seat.indexOf(claimant), discarderSeat),
+                            player,
+                        )
                         roundHadClaim = true
                         listener?.onPon(claimant, actualDiscard, player)
                         listener?.onHandsUpdated(claimant)
+                        cannotDiscard += actualDiscard
                         nextPlayer = claimant
                         needDraw = false
                         claimed = true
@@ -476,6 +548,7 @@ class MahjongGame(
                         roundHadClaim = true
                         listener?.onChii(next, actualDiscard, player)
                         listener?.onHandsUpdated(next)
+                        cannotDiscard += actualDiscard
                         nextPlayer = next
                         needDraw = false
                         claimed = true
@@ -484,23 +557,18 @@ class MahjongGame(
             }
 
             if (!claimed) nextPlayer = seat[nextPlayerSeat]
-            if (liveWall.isEmpty()) {
-                roundDraw = ExhaustiveDraw.NORMAL
-                break@roundLoop
-            }
             if (!drewTile) delay(MIN_WAITING_TIME)
         }
 
         if (roundDraw != null) {
-            dealerRemains = dealer.isTenpai
+            // 台麻荒局：莊家無條件續莊並增加連莊次數。
+            dealerRemains = true
             roundDraw(roundDraw!!)
         }
 
         delay(1200)
         if (!isPlaying) return
-        // A dealer repeat does not consume the scheduled hand, including on
-        // the final hand of a selected circle count. The game ends only after
-        // the final scheduled hand finishes without a repeat.
+
         if (!round.isAllLast(rule) || dealerRemains) {
             if (dealerRemains) {
                 round.honba++
@@ -513,13 +581,12 @@ class MahjongGame(
         }
     }
 
-    // --- Win and settlement logic ---
-
     private fun winContextFor(
         player: MahjongPlayerBase,
         isTsumo: Boolean,
         isLastLiveTile: Boolean = false,
         isKongReplacement: Boolean = false,
+        isFlowerReplacement: Boolean = false,
         isRobbingKong: Boolean = false,
     ): TaiwanWinContext {
         val dealer = seatOrderFromDealer.firstOrNull()
@@ -529,10 +596,11 @@ class MahjongGame(
             dealerRepeat = if (isDealer) round.honba else 0,
             isLastLiveTile = isLastLiveTile,
             isKongReplacement = isKongReplacement,
+            isFlowerReplacement = isFlowerReplacement,
             isRobbingKong = isRobbingKong,
-            isHeavenlyHand = isTsumo && isDealer && allDiscards.isEmpty() && !roundHadClaim && !isKongReplacement,
-            isEarthlyHand = isTsumo && !isDealer && firstUninterruptedTurn && !isKongReplacement,
-            isHumanHand = !isTsumo && !isDealer && firstUninterruptedTurn && !isRobbingKong,
+            isHeavenlyHand = isTsumo && isDealer && allDiscards.isEmpty() && !roundHadClaim && !isKongReplacement && !isFlowerReplacement,
+            isEarthlyHand = isTsumo && !isDealer && firstUninterruptedTurn && !isKongReplacement && !isFlowerReplacement,
+            isHumanHand = !isTsumo && !isDealer && allDiscards.size == 1 && player.discardedTiles.isEmpty() && !roundHadClaim && !isRobbingKong,
         )
     }
 
@@ -570,7 +638,11 @@ class MahjongGame(
         return buildList {
             for (candidate in candidates) {
                 delayForBot(candidate)
-                if (candidate.askToRon(tile, candidate.asClaimTarget(target))) add(candidate)
+                if (candidate.askToRon(tile, candidate.asClaimTarget(target))) {
+                    add(candidate)
+                } else {
+                    candidate.markPassedWin()
+                }
             }
         }
     }
@@ -674,5 +746,6 @@ class MahjongGame(
     companion object {
         const val MIN_WAITING_TIME = 1200L
         private const val SCORE_SETTLE_MS = 2500L
+        private const val DEAD_WALL_SIZE = 16
     }
 }
