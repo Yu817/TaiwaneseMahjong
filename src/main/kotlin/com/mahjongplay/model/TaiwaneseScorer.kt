@@ -57,7 +57,7 @@ object TaiwaneseScorer {
         }
         if (context.isRobbingKong) items += TaiItem("搶槓", 1)
         if (context.isLastLiveTile) {
-            items += TaiItem(if (isTsumo) "海底撈月" else "河底撈魚", 1)
+            items += TaiItem(if (isTsumo) "海底撈月" else "海底撈魚", 1)
         }
 
         addFlowerTai(items, flowers, seatWind)
