@@ -66,15 +66,23 @@ class MahjongPlayer(
         skippable: Boolean,
     ): MahjongTile {
         actionOptions = emptyList()
-        val safeTimeoutTile = hands.lastOrNull() ?: timeoutTile
+        fun safeFallback(): MahjongTile = hands.lastOrNull { it !in cannotDiscardTiles }
+            ?: hands.lastOrNull()
+            ?: timeoutTile
+
         return waitForBehaviorResult(
             behavior = MahjongGameBehavior.DISCARD,
-            waitingBehaviors = if (skippable) listOf(MahjongGameBehavior.DISCARD, MahjongGameBehavior.SKIP) else listOf(MahjongGameBehavior.DISCARD)
+            waitingBehaviors = if (skippable) {
+                listOf(MahjongGameBehavior.DISCARD, MahjongGameBehavior.SKIP)
+            } else {
+                listOf(MahjongGameBehavior.DISCARD)
+            }
         ) { behavior, data ->
-            val tileCode = data.toIntOrNull() ?: return@waitForBehaviorResult safeTimeoutTile
-            if (behavior == MahjongGameBehavior.DISCARD) {
-                MahjongTile.entries.find { it.code == tileCode } ?: safeTimeoutTile
-            } else safeTimeoutTile
+            if (behavior != MahjongGameBehavior.DISCARD) return@waitForBehaviorResult safeFallback()
+            val tileCode = data.toIntOrNull() ?: return@waitForBehaviorResult safeFallback()
+            val selected = MahjongTile.entries.find { it.code == tileCode }
+                ?: return@waitForBehaviorResult safeFallback()
+            if (selected in cannotDiscardTiles || selected !in hands) safeFallback() else selected
         }
     }
 
@@ -91,16 +99,12 @@ class MahjongPlayer(
         } else {
             listOf(ActionDisplayOption(MahjongGameBehavior.CHII, "吃", "", NamedTextColor.GREEN, subOptions = subs), skipOption)
         }
-        return waitForBehaviorResult(
-            behavior = MahjongGameBehavior.CHII
-        ) { behavior, data ->
+        return waitForBehaviorResult(behavior = MahjongGameBehavior.CHII) { behavior, data ->
             if (behavior == MahjongGameBehavior.CHII) {
                 val parts = data.split(",")
                 if (parts.size == 2) {
-                    val c1 = parts[0].toIntOrNull()
-                    val c2 = parts[1].toIntOrNull()
-                    val p1 = MahjongTile.entries.find { it.code == c1 }
-                    val p2 = MahjongTile.entries.find { it.code == c2 }
+                    val p1 = MahjongTile.entries.find { it.code == parts[0].toIntOrNull() }
+                    val p2 = MahjongTile.entries.find { it.code == parts[1].toIntOrNull() }
                     if (p1 != null && p2 != null) {
                         val pair = p1 to p2
                         if (pair in tilePairs) return@waitForBehaviorResult pair
@@ -122,11 +126,8 @@ class MahjongPlayer(
         }
         actionOptions = buildList {
             add(ActionDisplayOption(MahjongGameBehavior.PON, "碰", "", NamedTextColor.BLUE))
-            if (chiiSubs.size == 1) {
-                add(chiiSubs[0].copy(label = "吃 ${chiiSubs[0].label}"))
-            } else {
-                add(ActionDisplayOption(MahjongGameBehavior.CHII, "吃", "", NamedTextColor.GREEN, subOptions = chiiSubs))
-            }
+            if (chiiSubs.size == 1) add(chiiSubs[0].copy(label = "吃 ${chiiSubs[0].label}"))
+            else add(ActionDisplayOption(MahjongGameBehavior.CHII, "吃", "", NamedTextColor.GREEN, subOptions = chiiSubs))
             add(skipOption)
         }
         return waitForBehaviorResult(
@@ -137,10 +138,8 @@ class MahjongPlayer(
                 MahjongGameBehavior.CHII -> {
                     val parts = data.split(",")
                     if (parts.size == 2) {
-                        val c1 = parts[0].toIntOrNull()
-                        val c2 = parts[1].toIntOrNull()
-                        val p1 = MahjongTile.entries.find { it.code == c1 }
-                        val p2 = MahjongTile.entries.find { it.code == c2 }
+                        val p1 = MahjongTile.entries.find { it.code == parts[0].toIntOrNull() }
+                        val p2 = MahjongTile.entries.find { it.code == parts[1].toIntOrNull() }
                         if (p1 != null && p2 != null) {
                             val pair = p1 to p2
                             if (pair in tilePairsForChii) return@waitForBehaviorResult pair
@@ -163,9 +162,7 @@ class MahjongPlayer(
             ActionDisplayOption(MahjongGameBehavior.PON, "碰", "", NamedTextColor.BLUE),
             skipOption
         )
-        return waitForBehaviorResult(
-            behavior = MahjongGameBehavior.PON
-        ) { behavior, _ ->
+        return waitForBehaviorResult(behavior = MahjongGameBehavior.PON) { behavior, _ ->
             behavior == MahjongGameBehavior.PON
         }
     }
@@ -188,14 +185,11 @@ class MahjongPlayer(
         } else {
             listOf(ActionDisplayOption(MahjongGameBehavior.ANKAN_OR_KAKAN, "槓", "", NamedTextColor.DARK_AQUA, subOptions = kanSubs), skipOption)
         }
-        return waitForBehaviorResult(
-            behavior = MahjongGameBehavior.ANKAN_OR_KAKAN
-        ) { behavior, data ->
+        return waitForBehaviorResult(behavior = MahjongGameBehavior.ANKAN_OR_KAKAN) { behavior, data ->
             if (behavior == MahjongGameBehavior.ANKAN_OR_KAKAN) {
-                val code = data.toIntOrNull()
-                val tile = MahjongTile.entries.find { it.code == code }
-                if (tile != null && (tile in canAnkanTiles || tile in canKakanTiles.map { it.first })) {
-                    return@waitForBehaviorResult tile
+                val selected = MahjongTile.entries.find { it.code == data.toIntOrNull() }
+                if (selected != null && (selected in canAnkanTiles || selected in canKakanTiles.map { it.first })) {
+                    return@waitForBehaviorResult selected
                 }
             }
             null
@@ -228,9 +222,7 @@ class MahjongPlayer(
             ActionDisplayOption(MahjongGameBehavior.TSUMO, "自摸", "", NamedTextColor.GOLD),
             skipOption
         )
-        return waitForBehaviorResult(
-            behavior = MahjongGameBehavior.TSUMO
-        ) { behavior, _ ->
+        return waitForBehaviorResult(behavior = MahjongGameBehavior.TSUMO) { behavior, _ ->
             behavior == MahjongGameBehavior.TSUMO
         }
     }
@@ -240,11 +232,8 @@ class MahjongPlayer(
             ActionDisplayOption(MahjongGameBehavior.RON, "榮和", "", NamedTextColor.RED),
             skipOption
         )
-        return waitForBehaviorResult(
-            behavior = MahjongGameBehavior.RON
-        ) { behavior, _ ->
+        return waitForBehaviorResult(behavior = MahjongGameBehavior.RON) { behavior, _ ->
             behavior == MahjongGameBehavior.RON
         }
     }
-
 }
