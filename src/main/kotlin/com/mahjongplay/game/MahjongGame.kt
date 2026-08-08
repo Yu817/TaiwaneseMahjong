@@ -323,10 +323,12 @@ class MahjongGame(
                 val drawResult = if (initialDealerHand) {
                     DrawResult(dealerOpeningTile ?: player.hands.last(), wasFlowerReplacement = false)
                 } else {
-                    drawLiveFor(player) ?: run {
+                    val drawn = drawLiveFor(player)
+                    if (drawn == null) {
                         roundDraw = ExhaustiveDraw.NORMAL
                         break@roundLoop
                     }
+                    drawn
                 }
 
                 val lastTile = drawResult.tile
