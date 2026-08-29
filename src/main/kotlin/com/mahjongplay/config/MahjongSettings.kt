@@ -23,6 +23,7 @@ data class MahjongSettings(
     val defaultFlowersEnabled: Boolean = true,
     val teleportPlayersOnStart: Boolean = true,
     val seatDistance: Double = 2.8,
+    val tableScale: Float = 1.8f,
 ) {
     fun createRule(
         gameLength: MahjongRule.GameLength = defaultGameLength,
@@ -84,6 +85,7 @@ data class MahjongSettings(
                 defaultFlowersEnabled = config.getBoolean("defaults.flowers", true),
                 teleportPlayersOnStart = config.getBoolean("teleport.enabled", true),
                 seatDistance = config.getDouble("teleport.seat-distance", 2.8).coerceIn(2.0, 8.0),
+                tableScale = config.getDouble("display.table-scale", 1.8).toFloat().coerceIn(1.0f, 3.0f),
             )
         }
 

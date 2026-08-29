@@ -14,6 +14,7 @@ import org.joml.Quaternionf
 class MahjongTableDisplay(
     private val center: Location,
     var yaw: Float = DEFAULT_YAW,
+    val scale: Float = DEFAULT_SCALE,
 ) {
     var entity: ItemDisplay? = null
         private set
@@ -91,7 +92,7 @@ class MahjongTableDisplay(
         Location(
             base.world,
             base.x,
-            base.y + TABLE_ORIGIN_Y_OFFSET,
+            base.y + originYOffset(scale),
             base.z,
             0f,
             0f,
@@ -109,7 +110,7 @@ class MahjongTableDisplay(
         display.setTransformationMatrix(
             Matrix4f()
                 .rotate(rotation)
-                .scale(TABLE_SCALE)
+                .scale(scale)
         )
     }
 
@@ -131,14 +132,10 @@ class MahjongTableDisplay(
     }
 
     companion object {
-        // The source model spans -8..24 pixels around Minecraft's 8-pixel model pivot.
-        // Scaling the two-block-wide model by 1.5 makes it cover the existing 3x3 table.
-        const val TABLE_SCALE = 1.5f
-
-        // Source Y coordinates are 0..10 around the 8-pixel pivot. At 1.5 scale the
-        // model extends -0.75..0.1875 blocks from the display origin, so +0.75 places
-        // the feet at center.blockY and the tabletop at approximately +0.9375.
-        const val TABLE_ORIGIN_Y_OFFSET = 0.75f
+        const val DEFAULT_SCALE = 1.8f
         const val DEFAULT_YAW = 0f
+
+        fun originYOffset(scale: Float): Double = 0.5 * scale.toDouble()
+        fun greenTopOffset(scale: Float): Double = 0.5625 * scale.toDouble()
     }
 }

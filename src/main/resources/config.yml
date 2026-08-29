@@ -24,3 +24,8 @@ teleport:
   enabled: true
   # 玩家傳送到牌桌四側座位的距離（方塊）。
   seat-distance: 2.0
+
+display:
+  # 牌桌 3D 模型縮放倍率（預設 1.8，解決 16-17 張手牌/花牌卡邊框問題）。
+  table-scale: 1.8
+

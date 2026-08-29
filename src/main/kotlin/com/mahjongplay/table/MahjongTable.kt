@@ -35,6 +35,7 @@ class MahjongTable(
     var gameLengthText: String = "4圈",
     val playerCount: Int = 4,
     var chairsEnabled: Boolean = true,
+    val tableScale: Float = MahjongTableDisplay.DEFAULT_SCALE,
 ) {
 
     companion object {
@@ -124,7 +125,7 @@ class MahjongTable(
 
         if (!hasTableDisplay) {
             tableDisplay?.remove()
-            tableDisplay = MahjongTableDisplay(center).also { it.spawn() }
+            tableDisplay = MahjongTableDisplay(center, scale = tableScale).also { it.spawn() }
         }
 
         if (!hasJoinDisplay || !hasJoinInteraction) {

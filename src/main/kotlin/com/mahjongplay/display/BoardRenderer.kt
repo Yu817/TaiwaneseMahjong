@@ -35,6 +35,7 @@ data class ActionDisplay(
 class BoardRenderer(
     val game: MahjongGame,
     val tableCenter: Location,
+    val tableScale: Float = MahjongTableDisplay.DEFAULT_SCALE,
 ) : GameEventListener {
 
     val handDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
@@ -57,27 +58,15 @@ class BoardRenderer(
         private const val DISCARD_HOVER_CENTER_TOLERANCE = 0.14
         private const val ACTION_BUTTON_MIN_SPACING = 1.25
         private const val ACTION_BUTTON_GAP = 0.35
-
-        // The green top ends at about 1.406 blocks from the centre after the
-        // table model scale is applied.  Keep the first meld tile near its
-        // corner, but leave enough margin for the tile model and the adjacent
-        // player's standing hand.
-        private const val FURO_CORNER_EDGE = 1.34
-        // Bring the melds close to the table feet/outer rim while keeping the
-        // tile model inside the green top (the green edge is about 1.406).
-        private const val FURO_RADIAL_OFFSET = 1.32
-
-        // The custom table display starts at centerY + 0.75. Its green playing
-        // surface is the y=8..9 model element, scaled 1.5 around the 8-pixel
-        // item pivot: 0.75 + (1 / 16 * 1.5) = 0.84375 above centerY.
-        private const val TABLE_GREEN_TOP_OFFSET = 0.84375
     }
 
     private val world: World get() = tableCenter.world
 
-    private val surfaceY: Double get() = tableCenter.blockY + TABLE_GREEN_TOP_OFFSET
+    private val surfaceY: Double get() = tableCenter.blockY + MahjongTableDisplay.greenTopOffset(tableScale)
     private val standingTileY: Double get() = surfaceY + HEIGHT / 2.0
     private val flatTileY: Double get() = surfaceY + DEPTH / 2.0
+    private val furoCornerEdge: Double get() = tableScale * (1.34 / 1.5)
+    private val furoRadialOffset: Double get() = tableScale * (1.32 / 1.5)
 
     // Face points toward center so player behind the tile sees it
     private fun physicalSeatIndex(seatIndex: Int): Int = seatIndex
@@ -571,11 +560,11 @@ class BoardRenderer(
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val halfTable = FURO_CORNER_EDGE
+        val halfTable = furoCornerEdge
         val yaw = seatYaw(seatIndex)
         val tileGap = 0.0
 
-        val fuuroDirOffset = FURO_RADIAL_OFFSET
+        val fuuroDirOffset = furoRadialOffset
         var curX = tableCenter.x + dir[0] * fuuroDirOffset - perp[0] * halfTable
         var curZ = tableCenter.z + dir[1] * fuuroDirOffset - perp[1] * halfTable
 
@@ -694,14 +683,14 @@ class BoardRenderer(
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val halfTable = 1.5
+        val flowerHalfTable = tableScale * 0.88
         val yaw = seatYaw(seatIndex)
         val handDirOffset = 0.85 + DEPTH + HEIGHT
 
         for (index in existing.size until flowers.size) {
             val tile = flowers[index]
             val tileOffset = index * (WIDTH + PADDING)
-            val perpPos = halfTable - WIDTH / 2.0 - tileOffset
+            val perpPos = flowerHalfTable - WIDTH / 2.0 - tileOffset
             val x = tableCenter.x + dir[0] * handDirOffset - perp[0] * perpPos
             val z = tableCenter.z + dir[1] * handDirOffset - perp[1] * perpPos
             val loc = Location(world, x, flatTileY, z)

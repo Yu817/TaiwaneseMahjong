@@ -142,7 +142,7 @@ class MahjongTableManager(private val settings: MahjongSettings) : GameRegistry 
         rule: MahjongRule = createRule(),
     ): MahjongTableSession {
         val game = MahjongGame(rule = rule)
-        val renderer = BoardRenderer(game, center)
+        val renderer = BoardRenderer(game, center, settings.tableScale)
         val bridge = PaperGameBridge(game, renderer, this)
         game.listener = bridge
 
@@ -158,7 +158,7 @@ class MahjongTableManager(private val settings: MahjongSettings) : GameRegistry 
             renderer = renderer,
             bridge = bridge,
             center = center,
-            table = MahjongTable(center, modeText, 4, rule.chairsEnabled),
+            table = MahjongTable(center, modeText, 4, rule.chairsEnabled, settings.tableScale),
             humanId = humanId
         )
 
