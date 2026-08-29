@@ -90,6 +90,8 @@ class MahjongTable(
     private var turnText: Component? = null
 
     fun spawn() {
+        if (!center.isChunkLoaded) return
+
         val hasTableDisplay = tableDisplay?.entity?.isValid == true
         val hasJoinDisplay = joinTextDisplay?.isValid == true
         val hasJoinInteraction = joinInteraction?.isValid == true
@@ -806,6 +808,15 @@ class MahjongTable(
         turnTextDisplay?.remove(); turnTextDisplay = null
         turnText = null
         hideActionButtons()
+
+        if (center.isChunkLoaded) {
+            center.world.getNearbyEntities(center, 4.0, 3.0, 4.0)
+                .filter { entity ->
+                    entity.scoreboardTags.contains("taiwanese_mahjong_table") ||
+                        entity.scoreboardTags.contains("taiwanese_mahjong_chair")
+                }
+                .forEach { it.remove() }
+        }
     }
 
     fun destroy() {

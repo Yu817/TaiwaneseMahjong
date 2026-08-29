@@ -35,7 +35,22 @@ class MahjongChairDisplay(
         }
         entity?.remove()
 
-        val display = location.world.spawnEntity(location.clone(), EntityType.ITEM_DISPLAY) as ItemDisplay
+        val spawnLoc = location.clone()
+        if (spawnLoc.isChunkLoaded) {
+            val existing = location.world.getNearbyEntities(spawnLoc, 0.6, 0.6, 0.6)
+                .filterIsInstance<ItemDisplay>()
+                .filter { it.scoreboardTags.contains("taiwanese_mahjong_chair") }
+            if (existing.isNotEmpty()) {
+                val primary = existing.first()
+                existing.drop(1).forEach { it.remove() }
+                normalizeOrientation(primary)
+                entity = primary
+                ensureSeatEntity()
+                return primary
+            }
+        }
+
+        val display = location.world.spawnEntity(spawnLoc, EntityType.ITEM_DISPLAY) as ItemDisplay
         display.isPersistent = true
         display.addScoreboardTag("taiwanese_mahjong_chair")
         display.setViewRange(1.0f)
@@ -92,6 +107,12 @@ class MahjongChairDisplay(
         seatEntity = null
         entity?.remove()
         entity = null
+        if (location.isChunkLoaded) {
+            location.world.getNearbyEntities(location, 0.6, 0.6, 0.6)
+                .filterIsInstance<ItemDisplay>()
+                .filter { it.scoreboardTags.contains("taiwanese_mahjong_chair") }
+                .forEach { it.remove() }
+        }
     }
 
     private fun normalizeOrientation(display: ItemDisplay) {

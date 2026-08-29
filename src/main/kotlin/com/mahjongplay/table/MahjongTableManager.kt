@@ -89,6 +89,7 @@ class MahjongTableManager(private val settings: MahjongSettings) : GameRegistry 
             MahjongPlayPlugin.instance,
             Runnable {
                 tables.values.forEach { session ->
+                    if (!session.center.isChunkLoaded) return@forEach
                     session.table.spawn()
                     if (session.game.status == GameStatus.WAITING && session.game.players.isNotEmpty()) {
                         session.table.showActionButtons(buttonAnchorFor(session))
@@ -102,6 +103,7 @@ class MahjongTableManager(private val settings: MahjongSettings) : GameRegistry 
             MahjongPlayPlugin.instance,
             Runnable {
                 tables.values.forEach { session ->
+                    if (!session.center.isChunkLoaded) return@forEach
                     session.renderer.refreshActionButtons()
                     if (session.game.status == GameStatus.WAITING && session.game.players.isNotEmpty()) {
                         val anchor = buttonAnchorFor(session)
@@ -117,6 +119,15 @@ class MahjongTableManager(private val settings: MahjongSettings) : GameRegistry 
             1L,
             6L,
         ).taskId
+    }
+
+    fun onChunkLoad(chunk: org.bukkit.Chunk) {
+        tables.values.filter { it.center.world == chunk.world && it.center.chunk.x == chunk.x && it.center.chunk.z == chunk.z }.forEach { session ->
+            session.table.spawn()
+            if (session.game.status == GameStatus.WAITING && session.game.players.isNotEmpty()) {
+                session.table.showActionButtons(buttonAnchorFor(session))
+            }
+        }
     }
 
     fun createRule(

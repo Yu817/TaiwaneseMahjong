@@ -25,7 +25,22 @@ class MahjongTableDisplay(
         }
         entity?.remove()
 
-        val display = center.world.spawnEntity(displayLocation(center), EntityType.ITEM_DISPLAY) as ItemDisplay
+        val spawnLoc = displayLocation(center)
+        if (spawnLoc.isChunkLoaded) {
+            val existing = center.world.getNearbyEntities(spawnLoc, 1.0, 1.0, 1.0)
+                .filterIsInstance<ItemDisplay>()
+                .filter { it.scoreboardTags.contains("taiwanese_mahjong_table") }
+            if (existing.isNotEmpty()) {
+                val primary = existing.first()
+                existing.drop(1).forEach { it.remove() }
+                normalizeOrientation(primary)
+                applyTransform(primary, yaw)
+                entity = primary
+                return primary
+            }
+        }
+
+        val display = center.world.spawnEntity(spawnLoc, EntityType.ITEM_DISPLAY) as ItemDisplay
         // Keep the table entity across chunk saves.  The manager also repairs it
         // periodically because other server cleanup/reload routines may remove
         // display entities without touching the join text.
@@ -63,6 +78,13 @@ class MahjongTableDisplay(
     fun remove() {
         entity?.remove()
         entity = null
+        val loc = displayLocation(center)
+        if (loc.isChunkLoaded) {
+            center.world.getNearbyEntities(loc, 1.0, 1.0, 1.0)
+                .filterIsInstance<ItemDisplay>()
+                .filter { it.scoreboardTags.contains("taiwanese_mahjong_table") }
+                .forEach { it.remove() }
+        }
     }
 
     private fun displayLocation(base: Location): Location =

@@ -14,6 +14,7 @@ import org.bukkit.event.player.AsyncPlayerChatEvent
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.event.player.PlayerToggleSneakEvent
+import org.bukkit.event.world.ChunkLoadEvent
 import org.bukkit.command.PluginIdentifiableCommand
 import org.bukkit.plugin.java.JavaPlugin
 import fr.skytasul.glowingentities.GlowingEntities
@@ -134,6 +135,13 @@ class MahjongPlayPlugin : JavaPlugin(), Listener {
     fun onPlayerToggleSneak(event: PlayerToggleSneakEvent) {
         if (!event.isSneaking) return
         tableManager.releasePlayerFromChairs(event.player.uniqueId)
+    }
+
+    @EventHandler
+    fun onChunkLoad(event: ChunkLoadEvent) {
+        if (::tableManager.isInitialized) {
+            tableManager.onChunkLoad(event.chunk)
+        }
     }
 
     @EventHandler
