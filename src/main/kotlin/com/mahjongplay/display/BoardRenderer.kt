@@ -196,7 +196,8 @@ class BoardRenderer(
         val backList = handDisplays.getOrPut(player.uuid) { mutableListOf() }
         val ownerList = handOwnerDisplays.getOrPut(player.uuid) { mutableListOf() }
 
-        val tileCount = player.hands.size
+        val currentHands = player.hands.toList()
+        val tileCount = currentHands.size
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
         val dirOffset = 0.85 + DEPTH + HEIGHT
@@ -209,7 +210,7 @@ class BoardRenderer(
         val drawnHandSize = waitingHandSize + 1
         val showGap = player.justDrewTile && tileCount == drawnHandSize
 
-        player.hands.forEachIndexed { index, tile ->
+        currentHands.forEachIndexed { index, tile ->
             val isLast = index == tileCount - 1 && showGap
             val tileOffset = index * (WIDTH + PADDING) + if (isLast) PADDING * 15.0 else 0.0
 
@@ -496,7 +497,7 @@ class BoardRenderer(
         if (seatIndex < 0) return
 
         val existing = discardDisplays.getOrPut(player.uuid) { mutableListOf() }
-        val tiles = player.discardedTilesForDisplay
+        val tiles = player.discardedTilesForDisplay.toList()
 
         val canAppend = tiles.size >= existing.size
                 && existing.indices.all { existing[it].tile == tiles[it] }
@@ -581,7 +582,8 @@ class BoardRenderer(
         var tileCount = 0
         var lastWasClaimTile = false
 
-        player.fuuroList.forEach { fuuro ->
+        val fuuroList = player.fuuroList.toList()
+        fuuroList.forEach { fuuro ->
             val isAnkan = fuuro.isKong && !fuuro.isOpen
             val isKakan = fuuro.isAddedKong
 
@@ -680,14 +682,15 @@ class BoardRenderer(
         if (seatIndex < 0) return
 
         val existing = flowerDisplays.getOrPut(player.uuid) { mutableListOf() }
+        val flowers = player.flowerTiles.toList()
 
-        if (player.flowerTiles.isEmpty()) {
+        if (flowers.isEmpty()) {
             existing.forEach { it.remove() }
             existing.clear()
             return
         }
 
-        if (existing.size >= player.flowerTiles.size) return
+        if (existing.size >= flowers.size) return
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
@@ -695,8 +698,8 @@ class BoardRenderer(
         val yaw = seatYaw(seatIndex)
         val handDirOffset = 0.85 + DEPTH + HEIGHT
 
-        for (index in existing.size until player.flowerTiles.size) {
-            val tile = player.flowerTiles[index]
+        for (index in existing.size until flowers.size) {
+            val tile = flowers[index]
             val tileOffset = index * (WIDTH + PADDING)
             val perpPos = halfTable - WIDTH / 2.0 - tileOffset
             val x = tableCenter.x + dir[0] * handDirOffset - perp[0] * perpPos
@@ -791,13 +794,14 @@ class BoardRenderer(
         val perp = seatPerpendicular(seatIndex)
         val dirOffset = 0.85 + DEPTH + HEIGHT
         val yaw = seatYaw(seatIndex)
-        val tileCount = player.hands.size
+        val currentHands = player.hands.toList()
+        val tileCount = currentHands.size
         val totalWidth = tileCount * WIDTH + (tileCount - 1) * PADDING
         val startOffset = totalWidth / 2.0 - HAND_RIGHT_OFFSET
 
         val revealed = mutableListOf<MahjongTileDisplay>()
 
-        player.hands.forEachIndexed { index, tile ->
+        currentHands.forEachIndexed { index, tile ->
             val tileOffset = index * (WIDTH + PADDING)
             val x = tableCenter.x + dir[0] * dirOffset + perp[0] * (startOffset - tileOffset)
             val z = tableCenter.z + dir[1] * dirOffset + perp[1] * (startOffset - tileOffset)

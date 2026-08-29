@@ -215,7 +215,6 @@ class MahjongGame(
             }
             player.drawTile(tile)
             listener?.onTileDrawn(player, tile)
-            listener?.onHandsUpdated(player)
             return tile
         }
         return null
@@ -237,7 +236,6 @@ class MahjongGame(
             }
             player.drawTile(tile)
             listener?.onTileDrawn(player, tile)
-            listener?.onHandsUpdated(player)
             return DrawResult(tile, wasFlowerReplacement = false)
         }
         return null
@@ -333,6 +331,7 @@ class MahjongGame(
 
                 val lastTile = drawResult.tile
                 sortHands(player, lastTile)
+                listener?.onHandsUpdated(player)
                 timeoutTile = lastTile
                 drewTile = true
                 lastDrawWasLastLiveTile = !initialDealerHand && !drawResult.wasFlowerReplacement && liveWall.isEmpty()
@@ -385,6 +384,7 @@ class MahjongGame(
                     listener?.onHandsUpdated(player)
                     replacement = drawSupplementFor(player) ?: break
                     sortHands(player, replacement)
+                    listener?.onHandsUpdated(player)
                     val kongTsumoContext = winContextFor(
                         player = player,
                         isTsumo = true,
@@ -468,6 +468,7 @@ class MahjongGame(
                                 break@roundLoop
                             }
                             sortHands(claimant, replacement)
+                            listener?.onHandsUpdated(claimant)
                             val kongTsumoContext = winContextFor(
                                 player = claimant,
                                 isTsumo = true,

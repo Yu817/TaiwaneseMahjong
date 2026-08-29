@@ -1,6 +1,7 @@
 package com.mahjongplay.game
 
 import com.mahjongplay.model.*
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 台麻玩家共用狀態與牌操作。
@@ -13,13 +14,13 @@ abstract class MahjongPlayerBase {
     abstract val displayName: String
     abstract val isRealPlayer: Boolean
 
-    val hands: MutableList<MahjongTile> = mutableListOf()
+    val hands: MutableList<MahjongTile> = CopyOnWriteArrayList()
     var autoArrangeHands: Boolean = true
-    val fuuroList: MutableList<Fuuro> = mutableListOf()
-    val flowerTiles: MutableList<MahjongTile> = mutableListOf()
+    val fuuroList: MutableList<Fuuro> = CopyOnWriteArrayList()
+    val flowerTiles: MutableList<MahjongTile> = CopyOnWriteArrayList()
 
-    val discardedTiles: MutableList<MahjongTile> = mutableListOf()
-    val discardedTilesForDisplay: MutableList<MahjongTile> = mutableListOf()
+    val discardedTiles: MutableList<MahjongTile> = CopyOnWriteArrayList()
+    val discardedTilesForDisplay: MutableList<MahjongTile> = CopyOnWriteArrayList()
     var justDrewTile: Boolean = false
 
     /**
