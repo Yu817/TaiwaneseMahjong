@@ -40,6 +40,7 @@ interface GameEventListener {
     fun onEconomyObligation(obligation: EconomyObligation) {}
     fun onGameEnd(game: MahjongGame, scoreList: List<ScoreItem>) {}
     fun onHandsUpdated(player: MahjongPlayerBase) {}
+    fun shouldTerminateGame(game: MahjongGame): Boolean = false
 }
 
 /**
@@ -199,6 +200,17 @@ class MahjongGame(
         // 對局結束後重設所有玩家準備狀態，禁止自動準備
         players.forEach { it.ready = false }
         listener?.onGameEnd(this, scoreList)
+        seat.clear()
+        clearRoundState()
+        round = MahjongRound()
+    }
+
+    fun cancelGame() {
+        status = GameStatus.WAITING
+        currentPlayer = null
+        players.filterIsInstance<MahjongPlayer>().forEach { it.cancelPendingActions() }
+        gameJob?.cancel()
+        players.forEach { it.ready = false }
         seat.clear()
         clearRoundState()
         round = MahjongRound()
@@ -809,7 +821,10 @@ class MahjongGame(
         delay(1200)
         if (!isPlaying) return
 
-        if (!round.isAllLast(rule) || dealerRemains) {
+        val scoreBust = rule.startingPoints > 0 && players.any { it.points < 0 }
+        val shouldTerminate = scoreBust || (listener?.shouldTerminateGame(this) ?: false)
+
+        if (!shouldTerminate && (!round.isAllLast(rule) || dealerRemains)) {
             if (dealerRemains) {
                 round.honba++
             } else {

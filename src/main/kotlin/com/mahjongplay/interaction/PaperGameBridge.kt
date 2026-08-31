@@ -49,7 +49,9 @@ class PaperGameBridge(
         updateTurnDisplay(null)
         val playingUUIDs = game.realPlayers.map { it.uuid }.toSet()
         tableManager.getSession(game.tableId)?.table?.setHiddenFromPlayers(playingUUIDs)
-        broadcast(Component.text("[台麻] 遊戲開始！", NamedTextColor.GOLD))
+        val hasFillerBots = game.players.any { !it.isRealPlayer }
+        val isRealMoney = game.rule.moneyMatch && !hasFillerBots
+        MahjongChatFormat.gameStart(isRealMoney).forEach(::broadcast)
         startHudUpdates()
         turnTimerBar.cleanup()
         turnTimerBar.show()
@@ -64,8 +66,8 @@ class PaperGameBridge(
                         Title.title(
                             Component.text("【開局抓位・抓風】", NamedTextColor.GOLD)
                                 .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
-                            Component.text("請依擲骰順序抽取風牌決定座位！", NamedTextColor.GREEN),
-                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                            Component.text("請依序抽取風牌！(按【F 鍵】可開啟 🤖 託管代打)", NamedTextColor.GREEN),
+                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(3), Duration.ofMillis(500))
                         )
                     )
                 } else {
@@ -74,8 +76,8 @@ class PaperGameBridge(
                         Title.title(
                             Component.text("${wind?.displayName ?: "?"}家", NamedTextColor.GOLD)
                                 .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
-                            Component.text("你的牌就在面前，準備開始！", NamedTextColor.GREEN),
-                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                            Component.text("你的牌就在面前 • 按【F 鍵】可開啟 🤖 託管代打", NamedTextColor.GREEN),
+                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(3), Duration.ofMillis(500))
                         )
                     )
                 }
@@ -91,13 +93,14 @@ class PaperGameBridge(
             MahjongPlayPlugin.instance.statsManager.recordHandsPlayed(game.players.map { it.uuid })
         }
         renderer.onRoundStart(game, round)
+        broadcast(MahjongChatFormat.roundStart(round.displayName(), round.honba))
         forEachPlayer { player ->
             val mjPlayer = game.realPlayers.find { it.uuid == player.uniqueId.toString() }
             val wind = mjPlayer?.let { ActionBarHUD.seatWindOf(game, it) }
             val title = Title.title(
-                Component.text(round.displayName(), NamedTextColor.GOLD),
+                Component.text(round.displayName(), NamedTextColor.GOLD).decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
                 Component.text(
-                    "${wind?.displayName ?: "?"}家  •  連莊${round.honba}  •  牌在你面前",
+                    "${wind?.displayName ?: "?"}家  •  連莊${round.honba}  •  按【F 鍵】開啟託管代打",
                     NamedTextColor.YELLOW
                 ),
                 Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofMillis(500))
@@ -156,6 +159,47 @@ class PaperGameBridge(
 
     override fun onTileDrawCompleted(event: TileDrawEvent) {
         renderer.onTileDrawCompleted(event)
+        if (event.liveWallSize == 16) {
+            broadcast(
+                MahjongChatFormat.ALERT_PREFIX.append(
+                    Component.text("牌牆剩餘 16 張，即將進入快流局階段！", NamedTextColor.GOLD)
+                )
+            )
+        } else if (event.liveWallSize == 8) {
+            broadcast(
+                MahjongChatFormat.ALERT_PREFIX.append(
+                    Component.text("牌牆僅剩最後 8 張，進入快流局階段！", NamedTextColor.RED)
+                        .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD)
+                )
+            )
+            forEachPlayer { player ->
+                player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0f, 1.5f)
+                player.showTitle(
+                    Title.title(
+                        Component.text("⚠️ 快流局警告", NamedTextColor.RED).decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
+                        Component.text("活牌僅剩最後 8 張！", NamedTextColor.YELLOW),
+                        Title.Times.times(Duration.ofMillis(100), Duration.ofSeconds(1), Duration.ofMillis(300))
+                    )
+                )
+            }
+        } else if (event.liveWallSize == 4) {
+            broadcast(
+                MahjongChatFormat.ALERT_PREFIX.append(
+                    Component.text("牌牆僅剩最後 4 張（最後一輪摸牌）！", NamedTextColor.DARK_RED)
+                        .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD)
+                )
+            )
+            forEachPlayer { player ->
+                player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_BELL, SoundCategory.PLAYERS, 1.0f, 1.8f)
+                player.showTitle(
+                    Title.title(
+                        Component.text("🚨 最後一輪摸牌", NamedTextColor.DARK_RED).decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
+                        Component.text("活牌僅剩最後 4 張！", NamedTextColor.RED),
+                        Title.Times.times(Duration.ofMillis(100), Duration.ofSeconds(1), Duration.ofMillis(300))
+                    )
+                )
+            }
+        }
     }
 
     override fun onTileDrawn(player: MahjongPlayerBase, tile: MahjongTile) {
@@ -170,9 +214,7 @@ class PaperGameBridge(
                 Component.text("補花！", NamedTextColor.LIGHT_PURPLE),
                 Component.text("${player.displayName} · ${flower.displayName}", NamedTextColor.AQUA),
             )
-            broadcast(
-                Component.text("[台麻] ${player.displayName} 補花：${flower.displayName}", NamedTextColor.LIGHT_PURPLE),
-            )
+            broadcast(MahjongChatFormat.flowerDrawn(player.displayName, flower))
         })
     }
 
@@ -198,12 +240,14 @@ class PaperGameBridge(
         renderer.onChii(player, claimedTile, from)
         MahjongSoundHelper.playChii(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("吃！", NamedTextColor.GREEN), Component.text(player.displayName, NamedTextColor.AQUA))
+        broadcast(MahjongChatFormat.chii(player.displayName, from.displayName, claimedTile))
     }
 
     override fun onPon(player: MahjongPlayerBase, claimedTile: MahjongTile, from: MahjongPlayerBase) {
         renderer.onPon(player, claimedTile, from)
         MahjongSoundHelper.playPon(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("碰！", NamedTextColor.AQUA), Component.text(player.displayName, NamedTextColor.AQUA))
+        broadcast(MahjongChatFormat.pon(player.displayName, from.displayName, claimedTile))
     }
 
     override fun onKan(player: MahjongPlayerBase, tile: MahjongTile, kanType: String, from: MahjongPlayerBase?) {
@@ -218,13 +262,14 @@ class PaperGameBridge(
             Component.text("$label！", NamedTextColor.DARK_AQUA),
             Component.text(player.displayName, NamedTextColor.AQUA),
         )
+        broadcast(MahjongChatFormat.kan(player.displayName, kanType, tile))
     }
 
     override fun onTsumo(player: MahjongPlayerBase, tile: MahjongTile, settlement: TaiwanSettlement) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable { renderer.revealHands(player) })
         MahjongSoundHelper.playTsumo(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("自摸！", NamedTextColor.GOLD), Component.text(player.displayName, NamedTextColor.AQUA))
-        sendTaiSummary(settlement)
+        MahjongChatFormat.tsumoCard(player, settlement).forEach(::broadcast)
         runCatching {
             MahjongPlayPlugin.instance.statsManager.recordTsumo(player.uuid, player.displayName, settlement)
         }
@@ -234,7 +279,7 @@ class PaperGameBridge(
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable { winners.forEach { renderer.revealHands(it) } })
         MahjongSoundHelper.playRon(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("胡牌！", NamedTextColor.RED), Component.text(winners.joinToString(", ") { it.displayName }, NamedTextColor.AQUA))
-        settlements.forEach { sendTaiSummary(it) }
+        MahjongChatFormat.ronCard(winners, loser, settlements).forEach(::broadcast)
         runCatching {
             winners.forEachIndexed { i, w ->
                 val s = settlements.getOrElse(i) { settlements.first() }
@@ -251,21 +296,20 @@ class PaperGameBridge(
         }
         MahjongSoundHelper.playDraw(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(draw.toText().color(NamedTextColor.YELLOW), Component.text("流局", NamedTextColor.GRAY))
+        val tenpais = game.players.map { it.displayName to it.isTenpai }
+        MahjongChatFormat.drawCard(draw.name, tenpais).forEach(::broadcast)
     }
 
     override fun onScoreSettlement(settlement: ScoreSettlement) {
         MahjongSoundHelper.playScoreSettlement(renderer.tableCenter, activeBukkitPlayers)
-        settlement.rankedScoreList.forEachIndexed { index, ranked ->
-            broadcast(
-                Component.text("  ${index + 1}. ", NamedTextColor.YELLOW)
-                    .append(Component.text(ranked.scoreItem.displayName, NamedTextColor.AQUA))
-                    .append(Component.text("  " + (if (ranked.scoreTotal > 0) "+${ranked.scoreTotal}" else "${ranked.scoreTotal}") + " 積分", if (ranked.scoreTotal > 0) NamedTextColor.GREEN else if (ranked.scoreTotal < 0) NamedTextColor.RED else NamedTextColor.WHITE))
-                    .append(Component.text(" (${ranked.scoreChangeText})", NamedTextColor.GRAY))
-            )
-        }
+        val scores = settlement.rankedScoreList.map { it.scoreItem.displayName to it.scoreTotal }
+        MahjongChatFormat.roundScoreSummary(scores).forEach(::broadcast)
     }
 
     override fun onEconomyObligation(obligation: EconomyObligation) {
+        val hasFillerBots = game.players.any { !it.isRealPlayer }
+        if (!game.rule.moneyMatch || hasFillerBots) return
+
         val plugin = MahjongPlayPlugin.instance
         val economy = plugin.currentEconomy()
         if (economy == null) {
@@ -288,28 +332,56 @@ class PaperGameBridge(
             return
         }
         broadcast(
-            Component.text("[麻將經濟] ", NamedTextColor.GOLD)
-                .append(Component.text("$payerName 支付 ${economy.format(result.paidAmount)} 給 $winnerName", NamedTextColor.GREEN)),
+            MahjongChatFormat.ECO_PREFIX.append(
+                Component.text("$payerName 支付 ${economy.format(result.paidAmount)} 給 $winnerName", NamedTextColor.GREEN)
+            )
         )
         if (result.shortfall > 0.0) {
             plugin.recordEconomyPayment(obligation.payerUUID, obligation.winnerUUID, result.shortfall)
             broadcast(
-                Component.text(
-                    "[麻將經濟] $payerName 餘額不足，尚有 ${economy.format(result.shortfall)} 未支付。",
-                    NamedTextColor.YELLOW,
-                ),
+                MahjongChatFormat.ECO_PREFIX.append(
+                    Component.text(
+                        "$payerName 餘額不足，尚有 ${economy.format(result.shortfall)} 未支付。",
+                        NamedTextColor.YELLOW,
+                    )
+                )
             )
         }
     }
 
+    override fun shouldTerminateGame(game: MahjongGame): Boolean {
+        val settings = tableManager.settings
+        if (!settings.economyEnabled || !settings.economyBankruptcyEnabled) return false
+        val hasFillerBots = game.players.any { !it.isRealPlayer }
+        if (!game.rule.moneyMatch || hasFillerBots) return false
 
+        val humanPlayers = game.players.filterIsInstance<MahjongPlayer>()
+        if (humanPlayers.size < 2) return false
+
+        val economy = MahjongPlayPlugin.instance.currentEconomy() ?: return false
+        // 最低續玩門檻：至少要有 1 底（若底分為 0 則至少要有 1 台，若均為 0 則為 1.0）
+        val minRequired = when {
+            game.rule.basePoints > 0 -> game.rule.basePoints.toDouble()
+            game.rule.pointsPerTai > 0 -> game.rule.pointsPerTai.toDouble()
+            else -> 1.0
+        }
+
+        val bankruptPlayers = humanPlayers.filter {
+            economy.balance(it.uuid) < minRequired
+        }
+
+        if (bankruptPlayers.isNotEmpty()) {
+            val names = bankruptPlayers.joinToString("、") { it.displayName }
+            MahjongChatFormat.bankruptcyAlert(names).forEach(::broadcast)
+            return true
+        }
+        return false
+    }
 
     override fun onGameEnd(game: MahjongGame, scoreList: List<ScoreItem>) {
-        // Persist the result before scheduling cosmetic cleanup.  During
-        // plugin shutdown Bukkit may never run the queued task, which used to
-        // make the final round disappear from statistics.
+        val isRanked = game.players.all { it.isRealPlayer || (it is MahjongPlayer && it.isBotTakeover) }
         runCatching {
-            MahjongPlayPlugin.instance.statsManager.recordMatchEnd(scoreList)
+            MahjongPlayPlugin.instance.statsManager.recordMatchEnd(scoreList, isRankedMatch = isRanked)
         }
         val task = Runnable {
             renderer.onGameEnd(game, scoreList)
@@ -333,23 +405,9 @@ class PaperGameBridge(
                 it.table.showActionButtons()
                 tableManager.registerJoinInteraction(it)
             }
-            broadcast(Component.text("[台麻] 遊戲結束！", NamedTextColor.GOLD))
-            scoreList.sortedByDescending { it.scoreOrigin }.forEachIndexed { index, item ->
-                val finalScoreText = if (item.scoreOrigin > 0) "+${item.scoreOrigin}" else "${item.scoreOrigin}"
-                broadcast(Component.text("  ${index + 1}. ${item.displayName}  ${finalScoreText} 積分", NamedTextColor.YELLOW))
-            }
+            MahjongChatFormat.gameEndPodium(scoreList).forEach(::broadcast)
         }
         if (MahjongPlayPlugin.instance.isEnabled) Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, task) else task.run()
-    }
-
-    private fun sendTaiSummary(settlement: TaiwanSettlement) {
-        if (settlement.taiList.isEmpty() && settlement.tai == 0) return
-        val items = settlement.taiList.joinToString(", ") { "${it.name}${it.tai}台" }
-        val flowers = if (settlement.flowerCount > 0) "，花牌${settlement.flowerCount}張" else ""
-        broadcast(
-            Component.text("  台: $items$flowers", NamedTextColor.GREEN)
-                .append(Component.text("  合計${settlement.tai}台，底台結算 ${settlement.score} 積分", NamedTextColor.YELLOW))
-        )
     }
 
     private fun startHudUpdates() {

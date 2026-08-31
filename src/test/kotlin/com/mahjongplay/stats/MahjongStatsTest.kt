@@ -19,6 +19,7 @@ class MahjongStatsTest {
             thirdPlaces = 2,
             fourthPlaces = 1,
             totalNetScore = 65000,
+            ratingPoints = 1550,
             totalHands = 40,
             tsumoCount = 6,
             ronCount = 6,
@@ -34,7 +35,7 @@ class MahjongStatsTest {
         assertEquals(10.0, stats.dealInRate)
         assertEquals(50.0, stats.tsumoRate)
         assertEquals(4.0, stats.averageTai)
-        assertEquals("🏆 四段・雀傑", stats.rankTitle)
+        assertEquals("🏆 四段・雀豪 ★★★", stats.rankTitle)
     }
 
     @Test

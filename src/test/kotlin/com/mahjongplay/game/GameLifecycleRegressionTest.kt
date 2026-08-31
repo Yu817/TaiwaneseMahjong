@@ -34,6 +34,26 @@ class GameLifecycleRegressionTest {
         }
     }
 
+    @Test
+    fun `listener shouldTerminateGame stops the game loop`() {
+        var terminationChecked = false
+        val game = MahjongGame(
+            listener = object : GameEventListener {
+                override fun shouldTerminateGame(game: MahjongGame): Boolean {
+                    terminationChecked = true
+                    return true
+                }
+            }
+        ).apply {
+            repeat(4) { addBot("Bot-$it") }
+        }
+
+        assertEquals(false, terminationChecked)
+        val shouldStop = game.listener?.shouldTerminateGame(game) ?: false
+        assertEquals(true, shouldStop)
+        assertEquals(true, terminationChecked)
+    }
+
     private fun readyGame() = MahjongGame().apply {
         repeat(4) { addBot("Bot-$it") }
     }

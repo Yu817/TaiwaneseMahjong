@@ -9,12 +9,14 @@ import com.mahjongplay.table.MahjongTableManager
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
+import org.bukkit.entity.ArmorStand
 import org.bukkit.entity.Interaction
 import org.bukkit.entity.Player
 import org.bukkit.event.entity.EntityDamageByEntityEvent
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
+import org.bukkit.event.player.PlayerInteractAtEntityEvent
 import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.player.PlayerAnimationEvent
@@ -68,6 +70,8 @@ class EntityInteractionListener(
         if (event.action != Action.RIGHT_CLICK_BLOCK) return
 
         val chairResult = gameManager.handleChairBlockInteraction(event.player, block.location)
+            ?: gameManager.handleChairBlockInteraction(event.player, block.location.clone().add(0.0, 1.0, 0.0))
+            ?: gameManager.handleChairBlockInteraction(event.player, block.location.clone().add(0.0, -1.0, 0.0))
         if (chairResult != null) {
             event.isCancelled = true
             sendChairResult(event.player, chairResult)
@@ -147,6 +151,20 @@ class EntityInteractionListener(
         val player = event.player
         val playerUUID = player.uniqueId.toString()
 
+        if (clickedEntity.scoreboardTags.contains("taiwanese_mahjong_chair") ||
+            clickedEntity.scoreboardTags.contains("taiwanese_mahjong_seat") ||
+            (clickedEntity is ArmorStand && clickedEntity.scoreboardTags.any { it.startsWith("taiwanese_mahjong") })
+        ) {
+            val chairResult = gameManager.handleChairBlockInteraction(player, clickedEntity.location.block.location)
+                ?: gameManager.handleChairBlockInteraction(player, clickedEntity.location.clone().add(0.0, -1.0, 0.0).block.location)
+                ?: gameManager.handleChairBlockInteraction(player, clickedEntity.location.clone().add(0.0, 1.0, 0.0).block.location)
+            if (chairResult != null) {
+                event.isCancelled = true
+                sendChairResult(player, chairResult)
+                return
+            }
+        }
+
         if (clickedEntity !is Interaction) return
 
         val joinSession = gameManager.getTableByJoinInteraction(clickedEntity.uniqueId)
@@ -187,9 +205,17 @@ class EntityInteractionListener(
                 return
             }
             val newReady = !mjPlayer.ready
+            if (newReady) {
+                val error = gameManager.canPlayerReady(readySession, playerUUID)
+                if (error != null) {
+                    player.sendMessage(Component.text("[麻將] $error", NamedTextColor.RED))
+                    return
+                }
+            }
             readySession.game.readyOrNot(playerUUID, newReady)
             gameManager.updateTableDisplay(readySession)
             player.sendMessage(Component.text("[麻將] ${if (newReady) "已準備 ✓" else "取消準備 ✗"}", if (newReady) NamedTextColor.GREEN else NamedTextColor.YELLOW))
+            gameManager.checkAutoStart(readySession)
             return
         }
 
@@ -323,13 +349,30 @@ class EntityInteractionListener(
         return true
     }
 
+    @EventHandler
+    fun onInteractAtEntity(event: PlayerInteractAtEntityEvent) {
+        val clickedEntity = event.rightClicked
+        if (clickedEntity.scoreboardTags.contains("taiwanese_mahjong_chair") ||
+            clickedEntity.scoreboardTags.contains("taiwanese_mahjong_seat") ||
+            (clickedEntity is ArmorStand && clickedEntity.scoreboardTags.any { it.startsWith("taiwanese_mahjong") })
+        ) {
+            val chairResult = gameManager.handleChairBlockInteraction(event.player, clickedEntity.location.block.location)
+                ?: gameManager.handleChairBlockInteraction(event.player, clickedEntity.location.clone().add(0.0, -1.0, 0.0).block.location)
+                ?: gameManager.handleChairBlockInteraction(event.player, clickedEntity.location.clone().add(0.0, 1.0, 0.0).block.location)
+            if (chairResult != null) {
+                event.isCancelled = true
+                sendChairResult(event.player, chairResult)
+            }
+        }
+    }
+
     private fun sendChairResult(player: org.bukkit.entity.Player, result: ChairInteractionResult) {
         val (message, color) = when (result) {
-            ChairInteractionResult.SEATED -> "已坐到這張椅子，按 Shift 可起身。" to NamedTextColor.GREEN
+            ChairInteractionResult.SEATED -> "已坐上椅子（按 Shift 可隨時起身走動）。" to NamedTextColor.GREEN
             ChairInteractionResult.OCCUPIED -> "這張椅子已經有人坐了。" to NamedTextColor.RED
             ChairInteractionResult.OTHER_TABLE -> "你已經在另一張麻將桌。" to NamedTextColor.RED
             ChairInteractionResult.TABLE_FULL -> "這張麻將桌已滿。" to NamedTextColor.RED
-            ChairInteractionResult.GAME_IN_PROGRESS -> "遊戲進行中，不能更換座位。" to NamedTextColor.YELLOW
+            ChairInteractionResult.GAME_IN_PROGRESS -> "遊戲進行中，非本桌玩家無法加入。" to NamedTextColor.YELLOW
         }
         player.sendMessage(Component.text("[麻將] $message", color))
     }

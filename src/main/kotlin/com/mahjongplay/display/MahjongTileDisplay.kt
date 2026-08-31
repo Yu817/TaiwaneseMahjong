@@ -36,8 +36,8 @@ object TileConstants {
 enum class TileFace { FACE_DOWN, FACE_UP, STANDING }
 
 class MahjongTileDisplay(
-    val location: Location,
-    val tile: MahjongTile,
+    var location: Location,
+    var tile: MahjongTile,
     var face: TileFace = TileFace.FACE_DOWN,
     var yaw: Float = 0f,
     val interactive: Boolean = false,
@@ -84,10 +84,12 @@ class MahjongTileDisplay(
     }
 
     fun updateTile(newTile: MahjongTile) {
+        tile = newTile
         entity?.setItemStack(createTileItem(newTile))
     }
 
     fun updatePosition(loc: Location, newYaw: Float, newFace: TileFace) {
+        location = loc
         yaw = newYaw
         face = newFace
         entity?.let {

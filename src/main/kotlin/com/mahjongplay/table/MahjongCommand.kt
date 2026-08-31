@@ -1,429 +1,140 @@
 package com.mahjongplay.table
 
+import com.mahjongplay.MahjongPlayPlugin
+import com.mahjongplay.game.BotDifficulty
 import com.mahjongplay.game.GameStatus
 import com.mahjongplay.game.MahjongPlayer
+import com.mahjongplay.interaction.MahjongChatFormat
 import com.mahjongplay.model.MahjongGameBehavior
 import com.mahjongplay.model.MahjongRule
+import com.mahjongplay.stats.MahjongStatsGUI
+import com.mahjongplay.stats.MahjongStatsManager
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
+import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
+import java.util.UUID
 
 class MahjongCommand(
     private val manager: MahjongTableManager,
-    private val statsManager: com.mahjongplay.stats.MahjongStatsManager,
+    private val statsManager: MahjongStatsManager,
 ) : CommandExecutor, TabCompleter {
 
     companion object {
-        private data class CommandPermission(val node: String, val deniedMessage: String)
-
-        private val COMMAND_PERMISSIONS = mapOf(
-            "create" to CommandPermission("mahjongplay.command.create", "你沒有權限建立麻將桌"),
-            "join" to CommandPermission("mahjongplay.command.join", "你沒有權限加入麻將桌"),
-            "leave" to CommandPermission("mahjongplay.command.leave", "你沒有權限離開麻將桌"),
-            "ready" to CommandPermission("mahjongplay.command.ready", "你沒有權限準備"),
-            "unready" to CommandPermission("mahjongplay.command.unready", "你沒有權限取消準備"),
-            "start" to CommandPermission("mahjongplay.command.start", "你沒有權限強制開始遊戲"),
-            "bot" to CommandPermission("mahjongplay.command.bot", "你沒有權限新增機器人"),
-            "kick" to CommandPermission("mahjongplay.command.kick", "你沒有權限踢出玩家"),
-            "destroy" to CommandPermission("mahjongplay.command.destroy", "你沒有權限銷毀麻將桌"),
-            "action" to CommandPermission("mahjongplay.command.action", "你沒有權限執行麻將操作"),
-            "settings" to CommandPermission("mahjongplay.command.settings", "你沒有權限調整麻將規則"),
-            "list" to CommandPermission("mahjongplay.command.list", "你沒有權限查看麻將桌列表"),
-            "info" to CommandPermission("mahjongplay.command.info", "你沒有權限查看麻將桌資訊"),
-            "status" to CommandPermission("mahjongplay.command.status", "你沒有權限查看麻將戰績統計")
-        )
+        const val PERM_ADMIN = "mahjongplay.admin"
+        const val PERM_CREATE = "mahjongplay.command.create"
+        const val PERM_JOIN = "mahjongplay.command.join"
+        const val PERM_LEAVE = "mahjongplay.command.leave"
+        const val PERM_SETTINGS = "mahjongplay.command.settings"
+        const val PERM_STATUS = "mahjongplay.command.status"
+        const val PERM_LIST = "mahjongplay.command.list"
     }
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
-        if (sender !is Player) {
-            if (args.firstOrNull()?.equals("destroy", ignoreCase = true) == true &&
-                sender.hasPermission(COMMAND_PERMISSIONS.getValue("destroy").node)
-            ) {
-                handleDestroy(sender, args)
-            } else {
-                sender.sendMessage("Only players can use this command.")
-            }
-            return true
-        }
-
-        if (args.isEmpty()) {
+        if (args.isEmpty() || args[0].equals("help", ignoreCase = true)) {
             sendHelp(sender)
             return true
         }
 
-        val subCommand = args[0].lowercase()
-        val permissionCommand = if (subCommand == "setting") "settings" else subCommand
-        if (!sender.requireCommandPermission(permissionCommand)) {
-            return true
-        }
-
-        when (subCommand) {
-            "create" -> handleCreate(sender, args)
-            "join" -> handleJoin(sender, args)
-            "leave" -> handleLeave(sender)
-            "ready" -> handleReady(sender, true)
-            "unready" -> handleReady(sender, false)
-            "start" -> handleStart(sender)
-            "bot" -> handleAddBot(sender, args)
-            "kick" -> handleKick(sender, args)
-            "destroy" -> handleDestroy(sender, args)
-            "action" -> handleAction(sender, args)
-            "settings", "setting" -> handleSettings(sender, args)
+        val sub = args[0].lowercase()
+        when (sub) {
+            "table", "create" -> if (sender is Player) handleCreate(sender, args) else sender.msgConsoleOnly()
+            "join" -> if (sender is Player) handleJoin(sender, args) else sender.msgConsoleOnly()
+            "leave", "quit" -> if (sender is Player) handleLeave(sender) else sender.msgConsoleOnly()
+            "settings", "setting", "menu", "gui" -> if (sender is Player) handleSettings(sender, args) else sender.msgConsoleOnly()
+            "stats", "status", "profile" -> if (sender is Player) handleStatus(sender, args) else sender.msgConsoleOnly()
             "list" -> handleList(sender)
-            "info" -> handleInfo(sender)
-            "status", "stats", "profile" -> handleStatus(sender, args)
+            "auto", "trust", "ai" -> if (sender is Player) handleAuto(sender) else sender.msgConsoleOnly()
+            "ready" -> if (sender is Player) handleReady(sender, true) else sender.msgConsoleOnly()
+            "unready" -> if (sender is Player) handleReady(sender, false) else sender.msgConsoleOnly()
+            "start" -> if (sender is Player) handleStart(sender) else sender.msgConsoleOnly()
+            "bot" -> if (sender is Player) handleAddBot(sender, args) else sender.msgConsoleOnly()
+            "action" -> if (sender is Player) handleAction(sender, args) else sender.msgConsoleOnly()
+            "admin" -> handleAdmin(sender, args)
+            "stop", "cancel" -> handleCancel(sender, args.drop(1).toTypedArray())
+            "destroy" -> handleDestroy(sender, args.drop(1).toTypedArray())
+            "kick" -> handleKick(sender, args.drop(1).toTypedArray())
+            "reload" -> handleReload(sender)
             else -> sendHelp(sender)
         }
         return true
     }
 
+    // ==========================================
+    // 玩家常用指令
+    // ==========================================
+
     private fun handleCreate(player: Player, args: Array<out String>) {
-        val mode = args.getOrNull(1)?.lowercase()
-        val gameLength: MahjongRule.GameLength?
-        val roundsOverride: Int?
-        when (mode) {
-            null -> {
-                gameLength = null
-                roundsOverride = null
-            }
-            "one" -> {
-                gameLength = MahjongRule.GameLength.ONE_GAME
-                roundsOverride = null
-            }
-            "east" -> {
-                gameLength = MahjongRule.GameLength.EAST
-                roundsOverride = null
-            }
-            "twowind" -> {
-                gameLength = MahjongRule.GameLength.TWO_WIND
-                roundsOverride = null
-            }
-            "rounds", "局" -> {
-                val rounds = args.getOrNull(2)?.toIntOrNull()
-                if (rounds == null || rounds !in MahjongRule.MIN_ROUNDS..MahjongRule.MAX_ROUNDS) {
-                    player.msg("局數必須是 ${MahjongRule.MIN_ROUNDS}-${MahjongRule.MAX_ROUNDS}", NamedTextColor.RED)
-                    return
-                }
-                gameLength = null
-                roundsOverride = rounds
-            }
-            else -> {
-                player.msg("可選模式: one(一局) / east(4局) / twowind(8局) / rounds <1-16>", NamedTextColor.RED)
-                return
-            }
+        if (!player.hasPermission(PERM_CREATE) && !player.hasPermission(PERM_ADMIN)) {
+            player.msg("你沒有權限建立麻將桌。", NamedTextColor.RED)
+            return
         }
-        val rule = manager.createRule(gameLength, roundsOverride)
+
+        val rule = manager.createRule()
         val direction = player.location.direction.setY(0).normalize()
         val loc = player.location.clone().add(direction.multiply(4))
         val center = loc.clone()
         center.x = loc.blockX + 0.5
         center.y = loc.blockY.toDouble()
         center.z = loc.blockZ + 0.5
+
         val session = manager.createTable(center, player.uniqueId.toString(), player.name, rule)
         session.table.spawn()
         manager.registerJoinInteraction(session)
-        player.msg("麻將桌已建立！${session.humanId}", NamedTextColor.GREEN)
-        player.msg("使用 /mahjong bot 新增機器人；可用 /mahjong settings 調整規則", NamedTextColor.YELLOW)
+        player.msg("麻將桌已於面前成功建立！【${session.humanId}】", NamedTextColor.GREEN)
+        player.msg("右鍵點擊牌桌或輸入 /mahjong settings 可開啟視覺化規則設定選單。", NamedTextColor.YELLOW)
     }
 
     private fun handleJoin(player: Player, args: Array<out String>) {
-        if (args.size < 2) {
-            val sessions = manager.getAllSessions()
-            if (sessions.isEmpty()) {
-                player.msg("目前沒有可用的麻將桌", NamedTextColor.RED)
-                return
-            }
-            val first = sessions.first()
-            if (manager.joinTable(first.tableId, player.uniqueId.toString(), player.name)) {
-                player.msg("已加入麻將桌 ${first.tableId.toString().take(8)}", NamedTextColor.GREEN)
-            } else {
-                player.msg("無法加入（可能已滿，或你已在遊戲中）", NamedTextColor.RED)
-            }
+        if (!player.hasPermission(PERM_JOIN) && !player.hasPermission(PERM_ADMIN)) {
+            player.msg("你沒有權限加入麻將桌。", NamedTextColor.RED)
             return
         }
 
-        val tableIdStr = args[1]
-        val matchingSession = manager.getAllSessions().find { it.tableId.toString().startsWith(tableIdStr) }
-        if (matchingSession == null) {
-            player.msg("找不到牌桌：$tableIdStr", NamedTextColor.RED)
+        val targetSession = if (args.size > 1) {
+            val query = args[1]
+            manager.getAllSessions().find { it.humanId.contains(query, ignoreCase = true) || it.tableId.toString().startsWith(query) }
+        } else {
+            manager.getAllSessions().firstOrNull { s -> s.center.world == player.world && s.center.distance(player.location) <= 10.0 }
+                ?: manager.getAllSessions().firstOrNull()
+        }
+
+        if (targetSession == null) {
+            player.msg("目前找不到可加入的麻將桌。", NamedTextColor.RED)
             return
         }
-        if (manager.joinTable(matchingSession.tableId, player.uniqueId.toString(), player.name)) {
-            player.msg("已加入麻將桌", NamedTextColor.GREEN)
+
+        if (manager.joinTable(targetSession.tableId, player.uniqueId.toString(), player.name)) {
+            player.msg("已成功加入麻將桌【${targetSession.humanId}】！", NamedTextColor.GREEN)
         } else {
-            player.msg("無法加入（可能已滿，或你已在遊戲中）", NamedTextColor.RED)
+            player.msg("無法加入牌桌（可能已滿人或您已在對局中）。", NamedTextColor.RED)
         }
     }
 
     private fun handleLeave(player: Player) {
         if (manager.leaveTable(player.uniqueId.toString())) {
-            player.msg("已離開麻將桌", NamedTextColor.YELLOW)
+            player.msg("已離開麻將桌。", NamedTextColor.YELLOW)
         } else {
-            player.msg("你不在任何麻將桌中", NamedTextColor.RED)
-        }
-    }
-
-    private fun handleReady(player: Player, ready: Boolean) {
-        val session = manager.getSessionForPlayer(player.uniqueId.toString())
-        if (session == null) {
-            player.msg("你不在任何麻將桌中", NamedTextColor.RED)
-            return
-        }
-        session.game.readyOrNot(player.uniqueId.toString(), ready)
-        manager.updateTableDisplay(session)
-        player.msg(if (ready) "已準備" else "取消準備", NamedTextColor.GREEN)
-        manager.checkAutoStart(session)
-    }
-
-    private fun handleStart(player: Player) {
-        val session = manager.getSessionForPlayer(player.uniqueId.toString())
-            ?: manager.getAllSessions().firstOrNull()
-        if (session == null) {
-            player.msg("目前沒有可用的麻將桌", NamedTextColor.RED)
-            return
-        }
-        val error = manager.startGame(session)
-        if (error != null) player.msg(error, NamedTextColor.RED)
-    }
-
-    private fun handleAddBot(player: Player, args: Array<out String>) {
-        val session = manager.getSessionForPlayer(player.uniqueId.toString())
-            ?: manager.getAllSessions().firstOrNull()
-        if (session == null) {
-            player.msg("目前沒有可用的麻將桌", NamedTextColor.RED)
-            return
-        }
-        if (session.game.status != GameStatus.WAITING) {
-            player.msg("遊戲已經開始", NamedTextColor.RED)
-            return
-        }
-        if (session.game.players.size >= session.game.rule.playerCount) {
-            player.msg("牌桌已滿", NamedTextColor.RED)
-            return
-        }
-        if (!session.game.rule.botsEnabled) {
-            player.msg("牌桌設定中已關閉 Bots（機器人）。若要加入機器人，請先在牌桌設定中開啟 Bots！", NamedTextColor.RED)
-            return
-        }
-        val difficulty = args.getOrNull(1)?.let { com.mahjongplay.game.BotDifficulty.fromString(it) }
-            ?: session.game.rule.defaultBotDifficulty
-        val botNum = session.game.players.count { !it.isRealPlayer } + 1
-        session.game.addBot("Bot$botNum", difficulty)
-        manager.updateTableDisplay(session)
-        player.msg("已新增機器人 Bot$botNum [${difficulty.displayName}]（${session.game.players.size}/${session.game.rule.playerCount}）", NamedTextColor.GREEN)
-        manager.checkAutoStart(session)
-    }
-
-    private fun handleKick(player: Player, args: Array<out String>) {
-        val session = manager.getSessionForPlayer(player.uniqueId.toString())
-            ?: manager.getAllSessions().firstOrNull()
-        if (session == null) {
-            player.msg("目前沒有可用的麻將桌", NamedTextColor.RED)
-            return
-        }
-        val index = args.getOrNull(1)?.toIntOrNull()
-        if (index == null || index !in session.game.players.indices) {
-            player.msg("用法：/mahjong kick <座位號 0-3>", NamedTextColor.RED)
-            return
-        }
-        session.game.kick(index)
-        player.msg("已踢出座位 $index", NamedTextColor.YELLOW)
-    }
-
-    private fun handleDestroy(sender: CommandSender, args: Array<out String>) {
-        val humanId = args.drop(1).joinToString(" ")
-        val session = if (humanId.isNotEmpty()) {
-            manager.getSessionByHumanId(humanId)
-        } else {
-            manager.getAllSessions().firstOrNull()
-        }
-        if (session == null) {
-            if (sender is Player) {
-                sender.msg("找不到麻將桌：$humanId", NamedTextColor.RED)
-            } else {
-                sender.sendMessage("找不到麻將桌：$humanId")
-            }
-            return
-        }
-        val name = session.humanId
-        manager.destroyTable(session.tableId)
-        if (sender is Player) {
-            sender.msg("麻將桌 $name 已銷毀", NamedTextColor.YELLOW)
-        } else {
-            sender.sendMessage("麻將桌 $name 已銷毀")
+            player.msg("你目前不在任何麻將桌中。", NamedTextColor.RED)
         }
     }
 
     private fun handleSettings(player: Player, args: Array<out String>) {
         val session = manager.getSessionForPlayer(player.uniqueId.toString())
+            ?: manager.getAllSessions().firstOrNull { s -> s.center.world == player.world && s.center.distance(player.location) <= 6.0 }
             ?: manager.getAllSessions().firstOrNull()
+
         if (session == null) {
-            player.msg("目前沒有可調整的麻將桌", NamedTextColor.RED)
-            return
-        }
-        if (session.game.status != GameStatus.WAITING) {
-            player.msg("遊戲進行中不能修改規則", NamedTextColor.RED)
+            player.msg("目前附近沒有麻將桌。", NamedTextColor.RED)
             return
         }
 
-        val isOwner = manager.isTableOwner(session, player.uniqueId.toString())
-        if (args.size >= 3 && !isOwner) {
-            player.msg("只有桌主可以修改設定；你可以查看目前設定，但不能更改。", NamedTextColor.RED)
-            manager.openSettingsMenu(session, player)
-            return
-        }
-
-        if (args.size < 3) {
-            manager.openSettingsMenu(session, player)
-            return
-        }
-
-        val key = args[1].lowercase()
-        val value = args.drop(2).joinToString(" ")
-        val old = session.game.rule
-        val updated = old.copy()
-        val error = when (key) {
-            "rounds", "局" -> {
-                val rounds = value.toIntOrNull()
-                if (rounds == null || rounds !in MahjongRule.MIN_ROUNDS..MahjongRule.MAX_ROUNDS) {
-                    "進度必須是 ${MahjongRule.MIN_ROUNDS}-${MahjongRule.MAX_ROUNDS}（1=1/4圈，16=4圈）"
-                } else {
-                    updated.roundsToPlay = rounds
-                    null
-                }
-            }
-            "winds", "將", "將數", "circles", "圈", "圈數" -> {
-                val circles = value.toIntOrNull()
-                if (circles == null || circles !in 1..4) {
-                    "圈數必須是 1-4（每圈4局）"
-                } else {
-                    updated.roundsToPlay = circles * 4
-                    null
-                }
-            }
-            "bot", "bot速度", "bot-delay" -> {
-                val seconds = value.trim()
-                    .lowercase()
-                    .replace("秒", "")
-                    .removeSuffix("s")
-                    .trim()
-                    .toLongOrNull()
-                val delay = seconds
-                    ?.takeIf { it in 1L..5L }
-                    ?.times(1000L)
-                if (delay == null) {
-                    "Bot反應請使用 1-5 秒，例如 2s"
-                } else {
-                    updated.botResponseDelayMs = delay
-                    null
-                }
-            }
-            "base", "底", "底分" -> {
-                val base = value.toIntOrNull()
-                if (base == null || base < 0) {
-                    "底分必須是 0 或更高"
-                } else {
-                    updated.basePoints = base
-                    null
-                }
-            }
-            "tai", "台", "每台" -> {
-                val tai = value.toIntOrNull()
-                if (tai == null || tai < 0) {
-                    "每台分數必須是 0 或更高"
-                } else {
-                    updated.pointsPerTai = tai
-                    null
-                }
-            }
-            "flowers", "flower", "花牌" -> {
-                when (value.lowercase()) {
-                    "on", "true", "yes", "開", "開啟" -> updated.flowersEnabled = true
-                    "off", "false", "no", "關", "關閉" -> updated.flowersEnabled = false
-                    else -> return player.msg("花牌請使用 on 或 off", NamedTextColor.RED)
-                }
-                null
-            }
-            "chairs", "chair", "椅子" -> {
-                when (value.lowercase()) {
-                    "on", "true", "yes", "開", "開啟" -> updated.chairsEnabled = true
-                    "off", "false", "no", "關", "關閉" -> updated.chairsEnabled = false
-                    else -> return player.msg("椅子請使用 on 或 off", NamedTextColor.RED)
-                }
-                null
-            }
-            "length", "模式" -> {
-                val length = when (value.lowercase()) {
-                    "one" -> MahjongRule.GameLength.ONE_GAME
-                    "east" -> MahjongRule.GameLength.EAST
-                    "twowind" -> MahjongRule.GameLength.TWO_WIND
-                    else -> null
-                }
-                if (length == null) {
-                    "模式請使用 one、east 或 twowind"
-                } else {
-                    updated.length = length
-                    updated.roundsToPlay = length.getRounds(updated.playerCount)
-                    null
-                }
-            }
-            else -> "未知設定：$key"
-        }
-
-        if (error != null) {
-            player.msg(error, NamedTextColor.RED)
-            return
-        }
-        session.game.changeRules(updated)
-        manager.updateTableDisplay(session)
-        player.msg("規則已更新；玩家需要重新準備。", NamedTextColor.GREEN)
-        session.game.rule.toComponents().forEach { player.sendMessage(it) }
-    }
-
-    private fun handleAction(player: Player, args: Array<out String>) {
-        if (args.size < 2) return
-        val session = manager.getSessionForPlayer(player.uniqueId.toString()) ?: return
-        val mjPlayer = session.game.realPlayers.find { it.uuid == player.uniqueId.toString() } as? MahjongPlayer ?: return
-
-        val behaviorName = args[1].uppercase()
-        val behavior = try { MahjongGameBehavior.valueOf(behaviorName) } catch (_: Exception) { return }
-        val data = if (args.size > 2) args.drop(2).joinToString(" ") else ""
-
-        mjPlayer.resolveAction(behavior, data)
-    }
-
-    private fun handleList(player: Player) {
-        val sessions = manager.getAllSessions()
-        if (sessions.isEmpty()) {
-            player.msg("目前沒有運作中的麻將桌", NamedTextColor.YELLOW)
-            return
-        }
-        player.msg("運作中的麻將桌：", NamedTextColor.GOLD)
-        sessions.forEach { session ->
-            val count = session.game.players.size
-            val pc = session.game.rule.playerCount
-            val status = session.game.status
-            player.msg("  ${session.humanId} - $count/$pc 位玩家 [$status]", NamedTextColor.AQUA)
-        }
-    }
-
-    private fun handleInfo(player: Player) {
-        val session = manager.getSessionForPlayer(player.uniqueId.toString())
-        if (session == null) {
-            player.msg("你不在任何麻將桌中", NamedTextColor.RED)
-            return
-        }
-        player.msg("麻將桌 ${session.humanId}", NamedTextColor.GOLD)
-        session.game.players.forEachIndexed { i, p ->
-            val ready = if (p.ready) "✓" else "✗"
-            val type = if (p.isRealPlayer) "玩家" else "機器人"
-            player.msg("  $i. ${p.displayName} [$type] $ready", NamedTextColor.AQUA)
-        }
-        session.game.rule.toComponents().forEach { player.sendMessage(it) }
+        MahjongSettingsGUI.open(player, session, manager)
     }
 
     private fun handleStatus(player: Player, args: Array<out String>) {
@@ -436,71 +147,343 @@ class MahjongCommand(
         } else {
             statsManager.getStats(player.uniqueId.toString(), player.name)
         }
-        com.mahjongplay.stats.MahjongStatsGUI.openStats(player, stats)
+        MahjongStatsGUI.openStats(player, stats)
     }
 
-    private fun sendHelp(player: Player) {
-        player.msg("=== 台灣麻將指令 ===", NamedTextColor.GOLD)
-        player.msg("/mahjong create [one/east/twowind] - 建立台麻牌桌", NamedTextColor.YELLOW)
-        player.msg("/mahjong join [id] - 加入牌桌", NamedTextColor.YELLOW)
-        player.msg("/mahjong leave - 離開牌桌", NamedTextColor.YELLOW)
-        player.msg("/mahjong ready/unready - 準備/取消準備", NamedTextColor.YELLOW)
-        player.msg("/mahjong bot [初級|中級|高級] - 新增指定難度機器人", NamedTextColor.YELLOW)
-         player.msg("/mahjong settings - 調整局數、Bot速度、底/台、花牌、椅子", NamedTextColor.YELLOW)
-        player.msg("/mahjong start - 開始遊戲", NamedTextColor.YELLOW)
-        player.msg("/mahjong destroy - 銷毀牌桌", NamedTextColor.YELLOW)
-        player.msg("/mahjong info - 查看牌桌規則", NamedTextColor.YELLOW)
-        player.msg("/mahjong list - 查看所有牌桌", NamedTextColor.YELLOW)
-        player.msg("/mahjong status [玩家] - 查看麻將個人歷史戰績與段位選單", NamedTextColor.YELLOW)
+    private fun handleAuto(player: Player) {
+        if (!manager.toggleBotTakeoverForPlayer(player)) {
+            player.msg("你目前不在進行中的麻將牌局中。", NamedTextColor.RED)
+        }
+    }
+
+    private fun handleReady(player: Player, ready: Boolean) {
+        val session = manager.getSessionForPlayer(player.uniqueId.toString())
+        if (session == null) {
+            player.msg("你不在任何麻將桌中。", NamedTextColor.RED)
+            return
+        }
+        if (ready) {
+            val error = manager.canPlayerReady(session, player.uniqueId.toString())
+            if (error != null) {
+                player.msg(error, NamedTextColor.RED)
+                return
+            }
+        }
+        session.game.readyOrNot(player.uniqueId.toString(), ready)
+        manager.updateTableDisplay(session)
+        player.msg(if (ready) "已完成準備 ✓" else "已取消準備 ✗", if (ready) NamedTextColor.GREEN else NamedTextColor.YELLOW)
+        manager.checkAutoStart(session)
+    }
+
+    private fun handleStart(player: Player) {
+        val session = manager.getSessionForPlayer(player.uniqueId.toString())
+            ?: manager.getAllSessions().firstOrNull()
+        if (session == null) {
+            player.msg("目前沒有可用的麻將桌。", NamedTextColor.RED)
+            return
+        }
+        val error = manager.startGame(session)
+        if (error != null) player.msg(error, NamedTextColor.RED)
+    }
+
+    private fun handleAddBot(player: Player, args: Array<out String>) {
+        val session = manager.getSessionForPlayer(player.uniqueId.toString())
+            ?: manager.getAllSessions().firstOrNull()
+        if (session == null) {
+            player.msg("目前沒有可用的麻將桌。", NamedTextColor.RED)
+            return
+        }
+        if (session.game.status != GameStatus.WAITING) {
+            player.msg("遊戲已經開始，無法加入機器人。", NamedTextColor.RED)
+            return
+        }
+        if (session.game.players.size >= session.game.rule.playerCount) {
+            player.msg("牌桌已滿（4/4）。", NamedTextColor.RED)
+            return
+        }
+        if (!session.game.rule.botsEnabled) {
+            player.msg("牌桌目前設定為關閉機器人。請先在牌桌設定中開啟 Bots！", NamedTextColor.RED)
+            return
+        }
+        val difficulty = args.getOrNull(1)?.let { BotDifficulty.fromString(it) } ?: session.game.rule.defaultBotDifficulty
+        val botNum = session.game.players.count { !it.isRealPlayer } + 1
+        session.game.addBot("Bot$botNum", difficulty)
+        manager.updateTableDisplay(session)
+        player.msg("已新增機器人 Bot$botNum [${difficulty.displayName}]（${session.game.players.size}/${session.game.rule.playerCount}）", NamedTextColor.GREEN)
+        manager.checkAutoStart(session)
+    }
+
+    private fun handleList(sender: CommandSender) {
+        val sessions = manager.getAllSessions()
+        if (sessions.isEmpty()) {
+            sender.msg("目前伺服器內沒有任何運作中的麻將桌。", NamedTextColor.YELLOW)
+            return
+        }
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
+        sender.sendMessage(Component.text("  🀄 運作中的麻將桌列表：", NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+        sessions.forEach { s ->
+            val count = s.game.players.size
+            val max = s.game.rule.playerCount
+            val statusText = if (s.game.status == GameStatus.PLAYING) "對局中" else "等待中"
+            val statusColor = if (s.game.status == GameStatus.PLAYING) NamedTextColor.RED else NamedTextColor.GREEN
+            val modeText = if (s.game.rule.moneyMatch && !s.game.rule.botsEnabled) "💰金幣局" else "🎮娛樂局"
+            sender.sendMessage(
+                Component.text("  • ", NamedTextColor.GRAY)
+                    .append(Component.text(s.humanId, NamedTextColor.AQUA).decorate(TextDecoration.BOLD))
+                    .append(Component.text(" | 玩家: $count/$max | ", NamedTextColor.GRAY))
+                    .append(Component.text("[$statusText]", statusColor))
+                    .append(Component.text(" | $modeText", NamedTextColor.YELLOW))
+            )
+        }
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
+    }
+
+    private fun handleAction(player: Player, args: Array<out String>) {
+        if (args.size < 2) return
+        val session = manager.getSessionForPlayer(player.uniqueId.toString()) ?: return
+        val mjPlayer = session.game.realPlayers.find { it.uuid == player.uniqueId.toString() } as? MahjongPlayer ?: return
+        val behaviorName = args[1].uppercase()
+        val behavior = runCatching { MahjongGameBehavior.valueOf(behaviorName) }.getOrNull() ?: return
+        val data = if (args.size > 2) args.drop(2).joinToString(" ") else ""
+        mjPlayer.resolveAction(behavior, data)
+    }
+
+    // ==========================================
+    // 管理員專用指令
+    // ==========================================
+
+    private fun handleAdmin(sender: CommandSender, args: Array<out String>) {
+        if (!sender.hasPermission(PERM_ADMIN)) {
+            sender.msg("你沒有權限執行管理員指令（需要 $PERM_ADMIN）。", NamedTextColor.RED)
+            return
+        }
+
+        if (args.size < 2) {
+            sendAdminHelp(sender)
+            return
+        }
+
+        val adminSub = args[1].lowercase()
+        val subArgs = args.drop(2).toTypedArray()
+        when (adminSub) {
+            "stop", "cancel" -> handleCancel(sender, subArgs)
+            "destroy" -> handleDestroy(sender, subArgs)
+            "kick" -> handleKick(sender, subArgs)
+            "reload" -> handleReload(sender)
+            "resetstats" -> handleResetStats(sender, subArgs)
+            else -> sendAdminHelp(sender)
+        }
+    }
+
+    private fun handleCancel(sender: CommandSender, args: Array<out String>) {
+        if (!sender.hasPermission(PERM_ADMIN) && sender is Player && !manager.isTableOwner(manager.getSessionForPlayer(sender.uniqueId.toString()) ?: return, sender.uniqueId.toString())) {
+            sender.msg("只有管理員或該桌桌主可以取消牌局。", NamedTextColor.RED)
+            return
+        }
+
+        val session = if (args.isNotEmpty()) {
+            val query = args.joinToString(" ")
+            manager.getSessionByHumanId(query)
+                ?: manager.getAllSessions().find { it.tableId.toString().startsWith(query) || it.game.players.any { p -> p.displayName.equals(query, ignoreCase = true) } }
+        } else {
+            if (sender is Player) manager.getSessionForPlayer(sender.uniqueId.toString()) else manager.getAllSessions().firstOrNull { it.game.status == GameStatus.PLAYING }
+        }
+
+        if (session == null) {
+            sender.msg("找不到符合條件的進行中牌桌。", NamedTextColor.RED)
+            return
+        }
+
+        if (session.game.status == GameStatus.WAITING) {
+            sender.msg("麻將桌【${session.humanId}】尚未開局，無需取消。", NamedTextColor.YELLOW)
+            return
+        }
+
+        if (manager.cancelGame(session)) {
+            sender.msg("麻將桌【${session.humanId}】的牌局已被強制終止並重設為等待狀態！", NamedTextColor.GREEN)
+        } else {
+            sender.msg("終止牌局失敗。", NamedTextColor.RED)
+        }
+    }
+
+    private fun handleDestroy(sender: CommandSender, args: Array<out String>) {
+        if (!sender.hasPermission(PERM_ADMIN)) {
+            sender.msg("只有管理員可以強制銷毀麻將桌。", NamedTextColor.RED)
+            return
+        }
+
+        if (args.firstOrNull()?.equals("all", ignoreCase = true) == true) {
+            val count = manager.getAllSessions().size
+            manager.getAllSessions().toList().forEach { manager.destroyTable(it.tableId) }
+            sender.msg("已強制銷毀全服共 $count 張麻將桌！", NamedTextColor.GREEN)
+            return
+        }
+
+        val query = args.joinToString(" ")
+        val session = if (query.isNotEmpty()) {
+            manager.getSessionByHumanId(query)
+                ?: manager.getAllSessions().find { it.tableId.toString().startsWith(query) }
+        } else {
+            if (sender is Player) manager.getSessionForPlayer(sender.uniqueId.toString()) else manager.getAllSessions().firstOrNull()
+        }
+
+        if (session == null) {
+            sender.msg("找不到欲銷毀的麻將桌。", NamedTextColor.RED)
+            return
+        }
+
+        val name = session.humanId
+        manager.destroyTable(session.tableId)
+        sender.msg("麻將桌【$name】已成功銷毀。", NamedTextColor.GREEN)
+    }
+
+    private fun handleKick(sender: CommandSender, args: Array<out String>) {
+        if (args.isEmpty()) {
+            sender.msg("用法：/mahjong admin kick <玩家名稱/座位號>", NamedTextColor.RED)
+            return
+        }
+
+        val targetName = args[0]
+        val session = manager.getAllSessions().find { s -> s.game.players.any { it.displayName.equals(targetName, ignoreCase = true) } }
+            ?: (if (sender is Player) manager.getSessionForPlayer(sender.uniqueId.toString()) else null)
+
+        if (session == null) {
+            sender.msg("找不到包含該玩家的麻將桌。", NamedTextColor.RED)
+            return
+        }
+
+        val isOwner = sender is Player && manager.isTableOwner(session, sender.uniqueId.toString())
+        if (!sender.hasPermission(PERM_ADMIN) && !isOwner) {
+            sender.msg("你沒有權限踢出該玩家。", NamedTextColor.RED)
+            return
+        }
+
+        val index = targetName.toIntOrNull() ?: session.game.players.indexOfFirst { it.displayName.equals(targetName, ignoreCase = true) }
+        if (index !in session.game.players.indices) {
+            sender.msg("在牌桌中找不到該玩家或座位號。", NamedTextColor.RED)
+            return
+        }
+
+        val kicked = session.game.players[index]
+        session.game.kick(index)
+        sender.msg("已將【${kicked.displayName}】移出麻將桌【${session.humanId}】。", NamedTextColor.GREEN)
+    }
+
+    private fun handleReload(sender: CommandSender) {
+        if (!sender.hasPermission(PERM_ADMIN)) {
+            sender.msg("你沒有權限重載設定檔。", NamedTextColor.RED)
+            return
+        }
+
+        MahjongPlayPlugin.instance.reloadPluginConfig()
+        sender.msg("TaiwaneseMahjong 設定檔 config.yml 已成功重載！", NamedTextColor.GREEN)
+    }
+
+    private fun handleResetStats(sender: CommandSender, args: Array<out String>) {
+        if (!sender.hasPermission(PERM_ADMIN)) {
+            sender.msg("你沒有權限重置玩家戰績。", NamedTextColor.RED)
+            return
+        }
+
+        if (args.isEmpty()) {
+            sender.msg("用法：/mahjong admin resetstats <玩家名稱>", NamedTextColor.RED)
+            return
+        }
+
+        val targetName = args[0]
+        val offline = Bukkit.getOfflinePlayer(targetName)
+        val uuidStr = offline.uniqueId.toString()
+        statsManager.resetStats(uuidStr)
+        sender.msg("已重置玩家【$targetName】的麻將歷史戰績紀錄！", NamedTextColor.GREEN)
+    }
+
+    // ==========================================
+    // 說明與 Tab 補全
+    // ==========================================
+
+    private fun sendHelp(sender: CommandSender) {
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
+        sender.sendMessage(Component.text("  🀄【台灣麻將】 指令導覽說明", NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+        sender.sendMessage(Component.text("  💡 玩家常用指令：", NamedTextColor.YELLOW).decorate(TextDecoration.BOLD))
+        sender.sendMessage(Component.text("  • /mahjong table", NamedTextColor.AQUA).append(Component.text(" - 於面前生成麻將桌", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong join [桌號]", NamedTextColor.AQUA).append(Component.text(" - 加入牌桌（或直接右鍵牌桌）", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong leave", NamedTextColor.AQUA).append(Component.text(" - 離開目前牌桌", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong settings", NamedTextColor.AQUA).append(Component.text(" - 開啟規則設定選單 GUI", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong stats [玩家]", NamedTextColor.AQUA).append(Component.text(" - 查看麻將歷史戰績與段位", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong auto", NamedTextColor.AQUA).append(Component.text(" - 開啟／取消 🤖 託管代打（或按 F 鍵）", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong list", NamedTextColor.AQUA).append(Component.text(" - 查看所有運作中的麻將桌", NamedTextColor.GRAY)))
+
+        if (sender.hasPermission(PERM_ADMIN)) {
+            sender.sendMessage(Component.text(" "))
+            sender.sendMessage(Component.text("  🛠 管理員專用指令：", NamedTextColor.RED).decorate(TextDecoration.BOLD))
+            sender.sendMessage(Component.text("  • /mahjong admin stop [桌號/玩家]", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制終止並重置牌局", NamedTextColor.GRAY)))
+            sender.sendMessage(Component.text("  • /mahjong admin destroy [桌號/all]", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制銷毀牌桌實體", NamedTextColor.GRAY)))
+            sender.sendMessage(Component.text("  • /mahjong admin kick <玩家>", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制踢出牌桌玩家", NamedTextColor.GRAY)))
+            sender.sendMessage(Component.text("  • /mahjong admin reload", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 重新載入 config.yml", NamedTextColor.GRAY)))
+            sender.sendMessage(Component.text("  • /mahjong admin resetstats <玩家>", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 重置玩家戰績數據", NamedTextColor.GRAY)))
+        }
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
+    }
+
+    private fun sendAdminHelp(sender: CommandSender) {
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
+        sender.sendMessage(Component.text("  🛠【台灣麻將】 管理員指令列表", NamedTextColor.RED).decorate(TextDecoration.BOLD))
+        sender.sendMessage(Component.text("  • /mahjong admin stop [桌號/玩家]", NamedTextColor.YELLOW).append(Component.text(" - 強制終止進行中的牌局", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong admin destroy [桌號/all]", NamedTextColor.YELLOW).append(Component.text(" - 銷毀牌桌", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong admin kick <玩家>", NamedTextColor.YELLOW).append(Component.text(" - 踢出玩家", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong admin reload", NamedTextColor.YELLOW).append(Component.text(" - 重新載入設定檔", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("  • /mahjong admin resetstats <玩家>", NamedTextColor.YELLOW).append(Component.text(" - 重置玩家戰績", NamedTextColor.GRAY)))
+        sender.sendMessage(MahjongChatFormat.DIVIDER)
     }
 
     override fun onTabComplete(sender: CommandSender, command: Command, label: String, args: Array<out String>): List<String> {
+        val isAdmin = sender.hasPermission(PERM_ADMIN)
+
         if (args.size == 1) {
-            return listOf("create", "join", "leave", "ready", "unready", "start", "bot", "settings", "kick", "destroy", "info", "list", "status")
-                .filter { sender.hasCommandPermission(it) }
-                .filter { it.startsWith(args[0].lowercase()) }
+            val suggestions = mutableListOf("table", "join", "leave", "settings", "stats", "auto", "list", "help")
+            if (isAdmin) {
+                suggestions += "admin"
+                suggestions += "stop"
+                suggestions += "destroy"
+                suggestions += "reload"
+            }
+            return suggestions.filter { it.startsWith(args[0].lowercase()) }
         }
-        if (args.size == 2 && (args[0].lowercase() == "status" || args[0].lowercase() == "stats")) {
-            return org.bukkit.Bukkit.getOnlinePlayers().map { it.name }.filter { it.startsWith(args[1], ignoreCase = true) }
+
+        if (args.size == 2) {
+            val first = args[0].lowercase()
+            if (first == "admin" && isAdmin) {
+                return listOf("stop", "destroy", "kick", "reload", "resetstats")
+                    .filter { it.startsWith(args[1].lowercase()) }
+            }
+            if (first == "stats" || first == "status" || first == "profile") {
+                return Bukkit.getOnlinePlayers().map { it.name }.filter { it.startsWith(args[1], ignoreCase = true) }
+            }
+            if (first == "join" || first == "stop" || first == "cancel") {
+                return manager.getAllHumanIds().filter { it.startsWith(args[1], ignoreCase = true) }
+            }
+            if (first == "destroy" && isAdmin) {
+                return (listOf("all") + manager.getAllHumanIds()).filter { it.startsWith(args[1], ignoreCase = true) }
+            }
         }
-        if (args.size == 2 && args[0].lowercase() == "create") {
-            if (!sender.hasCommandPermission("create")) return emptyList()
-            return listOf("one", "east", "twowind", "rounds")
-                .filter { it.startsWith(args[1].lowercase()) }
+
+        if (args.size == 3 && args[0].lowercase() == "admin" && isAdmin) {
+            val adminSub = args[1].lowercase()
+            when (adminSub) {
+                "stop", "cancel" -> return (manager.getAllHumanIds() + Bukkit.getOnlinePlayers().map { it.name }).filter { it.startsWith(args[2], ignoreCase = true) }
+                "destroy" -> return (listOf("all") + manager.getAllHumanIds()).filter { it.startsWith(args[2], ignoreCase = true) }
+                "kick", "resetstats" -> return Bukkit.getOnlinePlayers().map { it.name }.filter { it.startsWith(args[2], ignoreCase = true) }
+            }
         }
-        if (args.size == 2 && args[0].lowercase() == "bot") {
-            if (!sender.hasCommandPermission("bot")) return emptyList()
-            return listOf("low", "medium", "high", "初級", "中級", "高級")
-                .filter { it.startsWith(args[1].lowercase()) }
-        }
-        if (args.size == 2 && args[0].lowercase() == "settings") {
-            if (!sender.hasCommandPermission("settings")) return emptyList()
-            return listOf("rounds", "winds", "bot", "base", "tai", "flowers", "chairs", "length")
-                .filter { it.startsWith(args[1].lowercase()) }
-        }
-        if (args[0].lowercase() == "destroy") {
-            if (!sender.hasCommandPermission("destroy")) return emptyList()
-            val partial = args.drop(1).joinToString(" ")
-            return manager.getAllHumanIds().filter { it.startsWith(partial) }
-        }
+
         return emptyList()
     }
 
-    private fun CommandSender.hasCommandPermission(command: String): Boolean {
-        val permission = COMMAND_PERMISSIONS[command] ?: return true
-        return hasPermission(permission.node)
+    private fun CommandSender.msg(text: String, color: NamedTextColor) {
+        sendMessage(MahjongChatFormat.PREFIX.append(Component.text(text, color)))
     }
 
-    private fun Player.requireCommandPermission(command: String): Boolean {
-        val permission = COMMAND_PERMISSIONS[command] ?: return true
-        if (hasPermission(permission.node)) {
-            return true
-        }
-        msg(permission.deniedMessage, NamedTextColor.RED)
-        return false
-    }
-
-    private fun Player.msg(text: String, color: NamedTextColor) {
-        sendMessage(Component.text("[麻將] ", NamedTextColor.GOLD).append(Component.text(text, color)))
+    private fun CommandSender.msgConsoleOnly() {
+        sendMessage("此指令僅限遊戲內玩家使用。")
     }
 }

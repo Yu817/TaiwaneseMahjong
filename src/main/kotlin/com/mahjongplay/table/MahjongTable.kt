@@ -329,6 +329,22 @@ class MahjongTable(
         return seatOffsets[chairIndex]
     }
 
+    fun sitPlayerAtGameSeat(gameSeatIndex: Int, player: Player): Boolean {
+        if (!chairsEnabled) return false
+        val gameIndex = Math.floorMod(gameSeatIndex, seatOffsets.size)
+        val chairIndex = when (gameIndex) {
+            0 -> 0 // East
+            1 -> 3 // South
+            2 -> 2 // West
+            else -> 1 // North
+        }
+        val target = seatChairDisplays.getOrNull(chairIndex) ?: return false
+        seatChairDisplays
+            .filter { it !== target }
+            .forEach { it.releasePlayer(player.uniqueId) }
+        return target.sit(player)
+    }
+
     fun sitAtChair(blockLocation: Location, player: Player): Boolean {
         if (!chairsEnabled) return false
         val index = chairIndexAt(blockLocation)
@@ -341,9 +357,9 @@ class MahjongTable(
         return target.sit(player)
     }
 
-    private fun chairIndexAt(location: Location): Int {
-        if (location.block.type != Material.BARRIER) return -1
-        if (location.world != center.world || location.blockY != center.blockY) return -1
+    fun chairIndexAt(location: Location): Int {
+        if (location.world != center.world) return -1
+        if (location.blockY !in center.blockY - 1..center.blockY + 1) return -1
 
         return seatOffsets.indexOfFirst { seat ->
             location.blockX == center.blockX + seat.dx &&

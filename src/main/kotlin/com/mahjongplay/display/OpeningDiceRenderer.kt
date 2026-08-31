@@ -29,14 +29,15 @@ class OpeningDiceRenderer(
     private val displays = mutableListOf<ItemDisplay>()
     private var animationTask: BukkitTask? = null
 
-    fun begin(event: OpeningDiceEvent) {
+    fun begin(event: OpeningDiceEvent, players: Collection<org.bukkit.entity.Player> = emptyList()) {
         cancelAndClear()
-        val durationTicks = (event.animationMillis / 50L).toInt().coerceAtLeast(1)
-        event.dice.values.forEachIndexed { index, _ ->
-            val angle = index * (2.0 * PI / 3.0) - PI / 2.0
+        val durationTicks = ((event.animationMillis / 50L).toInt()).coerceAtLeast(10)
+
+        // Spawn 3 rolling dice
+        for (i in 0 until 3) {
             val location = center.clone().apply {
-                x += kotlin.math.cos(angle) * 0.16
-                z += kotlin.math.sin(angle) * 0.16
+                x += kotlin.math.cos(i * (2.0 * PI / 3.0)) * 0.18
+                z += kotlin.math.sin(i * (2.0 * PI / 3.0)) * 0.18
                 y = surfaceY() + 0.13
             }
             val display = center.world.spawnEntity(location, EntityType.ITEM_DISPLAY) as ItemDisplay
@@ -48,7 +49,9 @@ class OpeningDiceRenderer(
             displays += display
         }
 
-        center.world.playSound(center, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, SoundCategory.BLOCKS, 0.9f, 1.35f)
+        players.forEach { p ->
+            p.playSound(center, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, SoundCategory.PLAYERS, 0.9f, 1.35f)
+        }
         var tick = 0
         animationTask = Bukkit.getScheduler().runTaskTimer(
             MahjongPlayPlugin.instance,
@@ -83,11 +86,13 @@ class OpeningDiceRenderer(
         )
     }
 
-    fun complete(event: OpeningDiceEvent) {
+    fun complete(event: OpeningDiceEvent, players: Collection<org.bukkit.entity.Player> = emptyList()) {
         animationTask?.cancel()
         animationTask = null
         displays.forEachIndexed { index, display -> settle(display, event.dice.values[index], index) }
-        center.world.playSound(center, Sound.BLOCK_STONE_BUTTON_CLICK_ON, SoundCategory.BLOCKS, 1.0f, 1.65f)
+        players.forEach { p ->
+            p.playSound(center, Sound.BLOCK_STONE_BUTTON_CLICK_ON, SoundCategory.PLAYERS, 1.0f, 1.65f)
+        }
         displays.forEach(ItemDisplay::remove)
         displays.clear()
     }

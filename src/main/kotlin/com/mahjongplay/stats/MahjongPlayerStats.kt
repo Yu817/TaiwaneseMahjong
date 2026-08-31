@@ -7,11 +7,51 @@ data class MatchLogItem(
     val timestamp: Long,
     val rank: Int,
     val scoreDelta: Int,
-    val taiWon: Int,
-    val summary: String,
+    val rpDelta: Int = 0,
+    val taiWon: Int = 0,
+    val summary: String = "",
 ) {
     fun formattedDate(): String =
         SimpleDateFormat("yyyy/MM/dd HH:mm").format(Date(timestamp))
+}
+
+enum class RankTier(
+    val minRP: Int,
+    val nextTierMinRP: Int,
+    val displayName: String,
+    val badge: String,
+) {
+    NINE_DAN(3500, 3500, "🌟 九段・雀皇", "🌟"),
+    EIGHT_DAN(3000, 3500, "🌟 八段・雀神", "🌟"),
+    SEVEN_DAN(2600, 3000, "👑 七段・雀聖 ★★★", "👑"),
+    SIX_DAN(2200, 2600, "👑 六段・雀聖 ★★", "👑"),
+    FIVE_DAN(1800, 2200, "👑 五段・雀聖 ★", "👑"),
+    FOUR_DAN(1500, 1800, "🏆 四段・雀豪 ★★★", "🏆"),
+    THREE_DAN(1200, 1500, "🏆 三段・雀豪 ★★", "🏆"),
+    TWO_DAN(900, 1200, "🏆 二段・雀豪 ★", "🏆"),
+    ONE_DAN(600, 900, "🀄 初段・雀傑", "🀄"),
+    ADEPT_3(400, 600, "🀄 雀士 ★★★", "🀄"),
+    ADEPT_2(250, 400, "🀄 雀士 ★★", "🀄"),
+    ADEPT_1(100, 250, "🀄 雀士 ★", "🀄"),
+    NOVICE(0, 100, "🌱 雀生 (入門)", "🌱");
+
+    companion object {
+        fun fromRP(rp: Int): RankTier = when {
+            rp >= 3500 -> NINE_DAN
+            rp >= 3000 -> EIGHT_DAN
+            rp >= 2600 -> SEVEN_DAN
+            rp >= 2200 -> SIX_DAN
+            rp >= 1800 -> FIVE_DAN
+            rp >= 1500 -> FOUR_DAN
+            rp >= 1200 -> THREE_DAN
+            rp >= 900 -> TWO_DAN
+            rp >= 600 -> ONE_DAN
+            rp >= 400 -> ADEPT_3
+            rp >= 250 -> ADEPT_2
+            rp >= 100 -> ADEPT_1
+            else -> NOVICE
+        }
+    }
 }
 
 data class MahjongPlayerStats(
@@ -23,6 +63,8 @@ data class MahjongPlayerStats(
     var thirdPlaces: Int = 0,
     var fourthPlaces: Int = 0,
     var totalNetScore: Int = 0,
+    var ratingPoints: Int = 1000,
+    var highestRatingPoints: Int = 1000,
     var totalHands: Int = 0,
     var tsumoCount: Int = 0,
     var ronCount: Int = 0,
@@ -63,15 +105,18 @@ data class MahjongPlayerStats(
     val averageTai: Double
         get() = if (totalWins > 0) totalTaiWon.toDouble() / totalWins else 0.0
 
+    val rankTier: RankTier
+        get() = RankTier.fromRP(ratingPoints)
+
     val rankTitle: String
-        get() = when {
-            totalNetScore >= 400000 -> "🌟 七段・雀神"
-            totalNetScore >= 200000 -> "👑 六段・雀聖"
-            totalNetScore >= 100000 -> "👑 五段・雀豪"
-            totalNetScore >= 60000 -> "🏆 四段・雀傑"
-            totalNetScore >= 30000 -> "🏆 三段・雀傑"
-            totalNetScore >= 10000 -> "🀄 二段・雀士"
-            totalNetScore >= 0 -> "🀄 初段・雀士"
-            else -> "🌱 雀生 (入門)"
+        get() = rankTier.displayName
+
+    val rankProgressPercent: Double
+        get() {
+            val tier = rankTier
+            if (tier.nextTierMinRP <= tier.minRP) return 100.0
+            val earned = (ratingPoints - tier.minRP).coerceAtLeast(0)
+            val span = tier.nextTierMinRP - tier.minRP
+            return ((earned.toDouble() / span) * 100.0).coerceIn(0.0, 100.0)
         }
 }

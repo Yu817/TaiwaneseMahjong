@@ -46,4 +46,20 @@ class MahjongSettingsTest {
         assertEquals(0L, MahjongSettings.from(disabled).openingDiceAnimationMs)
         assertEquals(MahjongRule.MAX_OPENING_DICE_ANIMATION_MS, MahjongSettings.from(excessive).openingDiceAnimationMs)
     }
+
+    @Test
+    fun `economy min-balance and bankruptcy settings load correctly`() {
+        val defaultConfig = YamlConfiguration()
+        val defaultSettings = MahjongSettings.from(defaultConfig)
+        assertEquals(0.0, defaultSettings.economyMinBalance)
+        assertEquals(true, defaultSettings.economyBankruptcyEnabled)
+
+        val customConfig = YamlConfiguration().apply {
+            set("economy.min-balance", 5000.0)
+            set("economy.bankruptcy-check", false)
+        }
+        val customSettings = MahjongSettings.from(customConfig)
+        assertEquals(5000.0, customSettings.economyMinBalance)
+        assertEquals(false, customSettings.economyBankruptcyEnabled)
+    }
 }

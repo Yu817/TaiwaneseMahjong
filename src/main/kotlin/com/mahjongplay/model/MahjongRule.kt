@@ -14,7 +14,7 @@ data class MahjongRule(
     var length: GameLength = GameLength.TWO_WIND,
     var playerCount: Int = 4,
     var thinkingTime: ThinkingTime = ThinkingTime.NORMAL,
-    var startingPoints: Int = 16_000,
+    var startingPoints: Int = 0,
     var minPointsToWin: Int = 0,
     var minimumTai: MinimumTai = MinimumTai.NONE,
     var spectate: Boolean = true,
@@ -40,6 +40,8 @@ data class MahjongRule(
     var defaultBotDifficulty: com.mahjongplay.game.BotDifficulty = com.mahjongplay.game.BotDifficulty.MEDIUM,
     /** 旁觀玩家是否可看手牌 */
     var spectatorSeeHands: Boolean = false,
+    /** 是否為金幣對戰局（若有機器人補位則強制為娛樂局） */
+    var moneyMatch: Boolean = true,
 ) {
     val isTaiwanese: Boolean
         get() = true
@@ -62,19 +64,25 @@ data class MahjongRule(
     fun toComponents(): List<Component> {
         val enabled = Component.text("開啟", NamedTextColor.GREEN)
         val disabled = Component.text("關閉", NamedTextColor.RED)
-        val botSeconds = (botResponseDelayMs / 1000L).coerceIn(1L, 5L)
+        val botSeconds = (botResponseDelayMs / 1000L).coerceIn(3L, 15L)
+        val modeText = if (moneyMatch && !botsEnabled) {
+            Component.text("💰 金幣真錢局", NamedTextColor.GOLD)
+        } else if (botsEnabled) {
+            Component.text("🎮 娛樂局 (含機器人)", NamedTextColor.AQUA)
+        } else {
+            Component.text("🎮 休閒娛樂局", NamedTextColor.AQUA)
+        }
         return listOf(
             Component.text("台灣麻將規則", NamedTextColor.GOLD),
+            Component.text(" • 對戰模式: ", NamedTextColor.YELLOW).append(modeText),
             Component.text(" • 圈數: ", NamedTextColor.YELLOW)
                 .append(Component.text("$displayCircleText（連莊另計）", NamedTextColor.GREEN)),
             Component.text(" • 手牌: ", NamedTextColor.YELLOW)
                 .append(Component.text("16 張／${playerCount} 人", NamedTextColor.AQUA)),
-            Component.text(" • 起始積分: ", NamedTextColor.YELLOW)
-                .append(Component.text("$startingPoints", NamedTextColor.GREEN)),
+            Component.text(" • 玩家限時: ", NamedTextColor.YELLOW)
+                .append(Component.text(thinkingTime.displayName, NamedTextColor.GREEN)),
             Component.text(" • 底／台: ", NamedTextColor.YELLOW)
                 .append(Component.text("$basePoints／$pointsPerTai 積分", NamedTextColor.GREEN)),
-            Component.text(" • 最低台數: ", NamedTextColor.YELLOW)
-                .append(Component.text("${minimumTai.tai} 台", NamedTextColor.GREEN)),
             Component.text(" • 花牌補牌: ", NamedTextColor.YELLOW)
                 .append(if (flowersEnabled) enabled else disabled),
             Component.text(" • 椅子: ", NamedTextColor.YELLOW)
@@ -91,8 +99,8 @@ data class MahjongRule(
         const val MIN_POINTS = 100
         const val MIN_ROUNDS = 1
         const val MAX_ROUNDS = 16
-        const val MIN_BOT_RESPONSE_MS = 1000L
-        const val MAX_BOT_RESPONSE_MS = 5000L
+        const val MIN_BOT_RESPONSE_MS = 3000L
+        const val MAX_BOT_RESPONSE_MS = 15000L
         const val DEFAULT_DRAW_ANIMATION_MS = 240L
         const val DEFAULT_INITIAL_DEAL_ANIMATION_MS = 100L
         const val DEFAULT_INITIAL_DEAL_GROUP_PAUSE_MS = 70L
@@ -137,13 +145,20 @@ data class MahjongRule(
         override fun toText(): Component = Component.text(tai.toString())
     }
 
-    enum class ThinkingTime(val base: Int, val extra: Int) : TextFormatting {
-        VERY_SHORT(3, 5),
-        SHORT(5, 10),
-        NORMAL(5, 20),
-        LONG(60, 0),
-        VERY_LONG(300, 0);
+    enum class ThinkingTime(val base: Int, val extra: Int, val displayName: String) : TextFormatting {
+        SEC_3(3, 0, "3 秒"),
+        SEC_6(6, 0, "6 秒"),
+        SEC_9(9, 0, "9 秒"),
+        SEC_12(12, 0, "12 秒"),
+        SEC_15(15, 0, "15 秒"),
+        VERY_SHORT(3, 0, "3 秒"),
+        SHORT(6, 0, "6 秒"),
+        NORMAL(9, 0, "9 秒"),
+        LONG(12, 0, "12 秒"),
+        VERY_LONG(15, 0, "15 秒");
 
-        override fun toText(): Component = Component.text("$base + $extra s")
+        val totalSeconds: Int get() = base + extra
+
+        override fun toText(): Component = Component.text(displayName)
     }
 }

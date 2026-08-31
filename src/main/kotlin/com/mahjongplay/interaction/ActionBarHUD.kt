@@ -21,8 +21,16 @@ object ActionBarHUD {
                 .decorate(TextDecoration.BOLD)
                 .append(Component.text("  •  ${game.round.displayName()}", NamedTextColor.AQUA))
                 .append(Component.text("  •  ${seatWind.displayName}家", NamedTextColor.LIGHT_PURPLE))
-                .append(Component.text("  •  剩餘牌 ${game.wallSize}", NamedTextColor.GREEN))
-                            val pointsText = when {
+            val wallCount = game.wallSize
+            val wallColor = when {
+                wallCount <= 4 -> NamedTextColor.DARK_RED
+                wallCount <= 8 -> NamedTextColor.RED
+                wallCount <= 16 -> NamedTextColor.YELLOW
+                else -> NamedTextColor.GREEN
+            }
+            val wallLabel = if (wallCount <= 8) "剩餘牌 $wallCount (快流局!)" else "剩餘牌 $wallCount"
+            bar = bar.append(Component.text("  •  $wallLabel", wallColor))
+            val pointsText = when {
                 mjPlayer.points > 0 -> "+${mjPlayer.points}"
                 else -> "${mjPlayer.points}"
             }

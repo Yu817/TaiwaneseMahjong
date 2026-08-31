@@ -8,7 +8,7 @@ defaults:
   # Bot 每次作答前等待的毫秒數；目前設定面板提供 1-5 秒。
   bot-response-ms: 1000
 
-  starting-points: 16000
+  starting-points: 0
 
   # 台灣底台制：每筆支付 = 底 + 台數 * 每台籌碼。
   base-points: 0
@@ -25,6 +25,10 @@ teleport:
 economy:
   # 只有真人座位彼此付款時才使用 Vault；Bot 相關付款仍只算牌局積分。
   enabled: true
+  # 真人開局/準備最低餘額要求（0 = 自動依底台動態計算：底 + 16 台）。
+  min-balance: 0.0
+  # 是否在每局結算後檢查破產（擊飛）：若餘額不足以支付基本底台，自動提前結束整場牌局。
+  bankruptcy-check: true
 
 display:
   # 牌桌 3D 模型縮放倍率（預設 1.8，解決 16-17 張手牌/花牌卡邊框問題）。

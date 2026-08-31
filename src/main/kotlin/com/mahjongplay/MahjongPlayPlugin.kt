@@ -85,6 +85,7 @@ class MahjongPlayPlugin : JavaPlugin(), Listener {
 
         interactionListener = EntityInteractionListener(tableManager)
         server.pluginManager.registerEvents(interactionListener, this)
+        server.pluginManager.registerEvents(com.mahjongplay.table.MahjongSettingsGUIListener(tableManager), this)
         server.pluginManager.registerEvents(this, this)
 
         server.scheduler.runTaskLater(this, Runnable {
@@ -92,6 +93,12 @@ class MahjongPlayPlugin : JavaPlugin(), Listener {
         }, 20L)
 
         logger.info("TaiwaneseMahjong v${pluginMeta.version} enabled!")
+    }
+
+    fun reloadPluginConfig() {
+        reloadConfig()
+        tableManager.settings = MahjongSettings.from(config)
+        economy = currentEconomy()
     }
 
     /** Resolve on demand so Vault/provider reloads cannot leave a stale handle. */

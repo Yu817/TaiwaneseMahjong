@@ -192,9 +192,12 @@ class BoardRenderer(
         })
     }
 
+    private val activeBukkitPlayers: List<Player>
+        get() = game.realPlayers.mapNotNull { runCatching { Bukkit.getPlayer(UUID.fromString(it.uuid)) }.getOrNull() }
+
     override fun onSeatWindDrawStarted(event: SeatWindDrawStartEvent) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
-            openingDiceRenderer.begin(OpeningDiceEvent(event.dice, event.starterSeatIndex, 2000L))
+            openingDiceRenderer.begin(OpeningDiceEvent(event.dice, event.starterSeatIndex, 2000L), activeBukkitPlayers)
             seatWindDrawRenderer.begin(event, game)
         })
     }
@@ -220,13 +223,13 @@ class BoardRenderer(
 
     override fun onOpeningDiceStarted(event: OpeningDiceEvent) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
-            openingDiceRenderer.begin(event)
+            openingDiceRenderer.begin(event, activeBukkitPlayers)
         })
     }
 
     override fun onOpeningDiceCompleted(event: OpeningDiceEvent) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
-            openingDiceRenderer.complete(event)
+            openingDiceRenderer.complete(event, activeBukkitPlayers)
         })
     }
 

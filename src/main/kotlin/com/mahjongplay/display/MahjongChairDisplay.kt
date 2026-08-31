@@ -142,11 +142,11 @@ class MahjongChairDisplay(
 
         val seatLoc = seatLocation()
         val migrated = if (seatLoc.isChunkLoaded) {
-            seatLoc.world.getNearbyEntities(seatLoc, 0.25, 0.25, 0.25)
+            seatLoc.world.getNearbyEntities(seatLoc, 0.4, 0.4, 0.4)
                 .filterIsInstance<ArmorStand>()
                 .firstOrNull { stand ->
                     stand.scoreboardTags.contains("taiwanese_mahjong_seat") &&
-                        stand.location.distanceSquared(seatLoc) < 0.01
+                        stand.location.distanceSquared(seatLoc) < 0.05
                 }
         } else null
         if (migrated != null) {
@@ -157,7 +157,8 @@ class MahjongChairDisplay(
             migrated.isSilent = true
             migrated.isCollidable = false
             migrated.setGravity(false)
-            migrated.setMarker(true)
+            migrated.isSmall = true
+            migrated.setMarker(false)
             migrated.setRotation(yaw, 0f)
             return migrated
         }
@@ -169,9 +170,11 @@ class MahjongChairDisplay(
         seat.isSilent = true
         seat.isCollidable = false
         seat.setGravity(false)
-        seat.setMarker(true)
+        seat.isSmall = true
+        seat.setMarker(false)
         seat.setBasePlate(false)
         seat.setArms(false)
+        seat.setCanPickupItems(false)
         seat.setRotation(yaw, 0f)
         seat.addScoreboardTag("taiwanese_mahjong_seat")
         ownershipTag?.let(seat::addScoreboardTag)
@@ -202,6 +205,6 @@ class MahjongChairDisplay(
         // Matches the table model's item-pivot convention and places the
         // imported chair's seat close to the top of the invisible support block.
         const val ORIGIN_Y_OFFSET = 0.75
-        const val SEAT_Y_OFFSET = 0.35
+        const val SEAT_Y_OFFSET = -0.20
     }
 }

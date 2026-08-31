@@ -15,7 +15,7 @@ data class MahjongSettings(
     val defaultRounds: Int = 16,
     val defaultBotResponseMs: Long = MahjongRule.MIN_BOT_RESPONSE_MS,
     /** Standard Taiwanese Mahjong starting score for each seat. */
-    val defaultStartingPoints: Int = 16_000,
+    val defaultStartingPoints: Int = 0,
     val defaultBasePoints: Int = 0,
     val defaultPointsPerTai: Int = 1000,
     val defaultMinimumTai: MahjongRule.MinimumTai = MahjongRule.MinimumTai.NONE,
@@ -31,6 +31,9 @@ data class MahjongSettings(
     val handDistance: Double = BoardRenderer.DEFAULT_HAND_DISTANCE,
     val wallDistance: Double? = null,
     val economyEnabled: Boolean = true,
+    val economyMinBalance: Double = 0.0,
+    val economyBankruptcyEnabled: Boolean = true,
+    val defaultMoneyMatch: Boolean = true,
 ) {
     fun createRule(
         gameLength: MahjongRule.GameLength = defaultGameLength,
@@ -53,6 +56,7 @@ data class MahjongSettings(
             pointsPerTai = defaultPointsPerTai,
             flowersEnabled = defaultFlowersEnabled,
             botResponseDelayMs = defaultBotResponseMs,
+            moneyMatch = defaultMoneyMatch,
             drawAnimationMs = drawAnimationMs,
             initialDealAnimationMs = initialDealAnimationMs,
             initialDealGroupPauseMs = initialDealGroupPauseMs,
@@ -83,7 +87,7 @@ data class MahjongSettings(
                     "defaults.bot-response-ms",
                     MahjongRule.MIN_BOT_RESPONSE_MS,
                 ).coerceIn(MahjongRule.MIN_BOT_RESPONSE_MS, MahjongRule.MAX_BOT_RESPONSE_MS),
-                defaultStartingPoints = config.getInt("defaults.starting-points", 16_000)
+                defaultStartingPoints = config.getInt("defaults.starting-points", 0)
                     .coerceIn(0, MahjongRule.MAX_POINTS),
                 defaultBasePoints = config.getInt("defaults.base-points", 0)
                     .coerceIn(0, MahjongRule.MAX_POINTS),
@@ -119,6 +123,9 @@ data class MahjongSettings(
                     config.getDouble("display.wall-distance").coerceIn(0.80, 2.00)
                 } else null,
                 economyEnabled = config.getBoolean("economy.enabled", true),
+                economyMinBalance = config.getDouble("economy.min-balance", 0.0).coerceAtLeast(0.0),
+                economyBankruptcyEnabled = config.getBoolean("economy.bankruptcy-check", true),
+                defaultMoneyMatch = config.getBoolean("defaults.money-match", true),
             )
         }
 

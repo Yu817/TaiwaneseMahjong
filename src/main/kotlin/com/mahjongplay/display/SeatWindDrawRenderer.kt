@@ -2,6 +2,7 @@ package com.mahjongplay.display
 
 import com.mahjongplay.MahjongPlayPlugin
 import com.mahjongplay.game.*
+import com.mahjongplay.interaction.MahjongChatFormat
 import com.mahjongplay.model.MahjongTile
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -26,16 +27,17 @@ class SeatWindDrawRenderer(
     private val showToAllViewers: (MahjongTileDisplay) -> Unit,
     private val ownershipTag: String? = null,
 ) {
-    private val world: World = center.world
+    private val world: World get() = center.world
     private val tileDisplays = mutableListOf<MahjongTileDisplay>()
-    private val interactionToTileIndex = ConcurrentHashMap<UUID, Int>()
-    private var bannerDisplay: TextDisplay? = null
     private val pickedLabelDisplays = mutableListOf<TextDisplay>()
-    var currentPickerUUID: String? = null
-    var availableIndices = mutableSetOf(0, 1, 2, 3)
+    private var bannerDisplay: TextDisplay? = null
+
+    private val interactionToTileIndex = ConcurrentHashMap<UUID, Int>()
+    private var availableIndices = mutableSetOf<Int>()
+    private var currentPickerUUID: String? = null
 
     companion object {
-        const val WIND_TILE_SCALE = 0.44f
+        private const val WIND_TILE_SCALE = 0.44f
     }
 
     private fun getTileLocation(index: Int, sy: Double): Location {
@@ -100,7 +102,7 @@ class SeatWindDrawRenderer(
             tileDisplays += display
         }
 
-        world.playSound(center, Sound.ITEM_ARMOR_EQUIP_GENERIC, SoundCategory.BLOCKS, 1.0f, 1.2f)
+        playSoundToPlayers(game, Sound.ITEM_ARMOR_EQUIP_GENERIC, 1.0f, 1.2f)
         broadcastToPlayers(game, Component.text("🎲 擲出 ${event.dice.total} 點！由【${starter?.displayName}】率先起抓風牌", NamedTextColor.GOLD))
     }
 
@@ -160,8 +162,8 @@ class SeatWindDrawRenderer(
             pickedLabelDisplays += label
         }
 
-        world.playSound(center, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, SoundCategory.BLOCKS, 0.9f, 1.3f)
-        world.playSound(center, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, SoundCategory.BLOCKS, 0.7f, 1.2f)
+        playSoundToPlayers(game, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, 0.9f, 1.3f)
+        playSoundToPlayers(game, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.2f)
 
         broadcastToPlayers(
             game,
@@ -188,7 +190,7 @@ class SeatWindDrawRenderer(
                 .append(Component.text("【北家】 ", NamedTextColor.LIGHT_PURPLE).append(Component.text(north, NamedTextColor.WHITE)))
         )
 
-        world.playSound(center, Sound.UI_TOAST_CHALLENGE_COMPLETE, SoundCategory.BLOCKS, 1.0f, 1.0f)
+        playSoundToPlayers(game, Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f)
         broadcastToPlayers(game, Component.text("🎉 抓風完成！各家就位，即將開局！", NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
     }
 
@@ -214,8 +216,8 @@ class SeatWindDrawRenderer(
 
     fun isWindTileInteraction(entityUUID: UUID): Boolean = interactionToTileIndex.containsKey(entityUUID)
 
-    fun cancelAndClear() {
-        tileDisplays.forEach { it.remove() }
+    fun cleanup() {
+        tileDisplays.forEach(MahjongTileDisplay::remove)
         tileDisplays.clear()
         interactionToTileIndex.clear()
         bannerDisplay?.remove()
@@ -226,11 +228,22 @@ class SeatWindDrawRenderer(
         availableIndices.clear()
     }
 
-    private fun broadcastToPlayers(game: MahjongGame, message: Component) {
+    fun cancelAndClear() {
+        cleanup()
+    }
+
+    private fun playSoundToPlayers(game: MahjongGame, sound: Sound, volume: Float, pitch: Float) {
         game.realPlayers.forEach { mjPlayer ->
-            runCatching { Bukkit.getPlayer(UUID.fromString(mjPlayer.uuid)) }.getOrNull()?.sendMessage(
-                Component.text("[麻將] ", NamedTextColor.GOLD).append(message)
-            )
+            val p = runCatching { Bukkit.getPlayer(UUID.fromString(mjPlayer.uuid)) }.getOrNull()
+            p?.playSound(center, sound, SoundCategory.PLAYERS, volume, pitch)
+        }
+    }
+
+    private fun broadcastToPlayers(game: MahjongGame, message: Component) {
+        val fullMessage: Component = MahjongChatFormat.PREFIX.append(message)
+        game.realPlayers.forEach { mjPlayer ->
+            val p = runCatching { Bukkit.getPlayer(UUID.fromString(mjPlayer.uuid)) }.getOrNull()
+            p?.sendMessage(fullMessage)
         }
     }
 }

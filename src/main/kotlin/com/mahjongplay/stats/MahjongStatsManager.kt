@@ -55,6 +55,13 @@ class MahjongStatsManager(private val dataFolder: File) {
                 ?.firstOrNull { it.playerName.equals(name, ignoreCase = true) }
     }
 
+    fun resetStats(uuid: String): Boolean = synchronized(stateLock) {
+        val file = File(statsFolder, "$uuid.yml")
+        if (file.exists()) file.delete()
+        statsCache.remove(uuid)
+        true
+    }
+
     fun recordHandsPlayed(uuids: Collection<String>) {
         uuids.forEach { uuid ->
             val player = runCatching { UUID.fromString(uuid).let(Bukkit::getPlayer) }.getOrNull()
@@ -113,7 +120,7 @@ class MahjongStatsManager(private val dataFolder: File) {
         }
     }
 
-    fun recordMatchEnd(scoreList: List<ScoreItem>) {
+    fun recordMatchEnd(scoreList: List<ScoreItem>, isRankedMatch: Boolean = true) {
         val sorted = scoreList.sortedByDescending { it.scoreOrigin }
         val now = System.currentTimeMillis()
         synchronized(stateLock) {
@@ -134,29 +141,59 @@ class MahjongStatsManager(private val dataFolder: File) {
                 }
                 if (item.scoreOrigin > stats.maxMatchScore) stats.maxMatchScore = item.scoreOrigin
 
-                val summary = if (item.scoreOrigin >= 0) "+${item.scoreOrigin}" else item.scoreOrigin.toString()
+                // 計算天梯雀力 RP 增減（完全根據真人名次與段位係數，不受自訂底台影響）
+                val rpDelta = if (isRankedMatch) {
+                    calculateRPDelta(rank, stats.ratingPoints)
+                } else 0
+
+                stats.ratingPoints = (stats.ratingPoints + rpDelta).coerceAtLeast(0)
+                stats.highestRatingPoints = maxOf(stats.highestRatingPoints, stats.ratingPoints)
+
+                val scoreSign = if (item.scoreOrigin >= 0) "+${item.scoreOrigin}" else item.scoreOrigin.toString()
+                val rpSign = if (rpDelta >= 0) "+$rpDelta" else "$rpDelta"
+                val summary = if (isRankedMatch) "#${rank} ($scoreSign, $rpSign RP)" else "#${rank} ($scoreSign [休閒])"
+
                 stats.recentHistory.add(
                     0,
                     MatchLogItem(
                         timestamp = now,
                         rank = rank,
                         scoreDelta = item.scoreOrigin,
+                        rpDelta = rpDelta,
                         taiWon = 0,
-                        summary = "#${rank} ($summary)",
+                        summary = summary,
                     ),
                 )
-                while (stats.recentHistory.size > 8) stats.recentHistory.removeAt(stats.recentHistory.lastIndex)
-                // Match-end is synchronous from the bridge; make this durable
-                // before returning so shutdown cannot race this final update.
+                while (stats.recentHistory.size > 21) stats.recentHistory.removeAt(stats.recentHistory.lastIndex)
                 enqueueSnapshot(snapshotOf(stats), wait = true)
             }
+        }
+    }
+
+    private fun calculateRPDelta(rank: Int, currentRP: Int): Int {
+        return when (rank) {
+            1 -> 60 // 🥇 一位固定 +60 RP
+            2 -> 20 // 🥈 二位固定 +20 RP
+            3 -> when {
+                currentRP < 600 -> 0    // 新手雀生/雀士 三位不扣分
+                currentRP < 1200 -> -15 // 雀傑 三位 -15 RP
+                currentRP < 2200 -> -20 // 雀豪 三位 -20 RP
+                else -> -30             // 雀聖/雀神 三位 -30 RP
+            }
+            4 -> when {
+                currentRP < 600 -> -20  // 新手雀生/雀士 四位保護 -20 RP
+                currentRP < 1200 -> -45 // 雀傑 四位 -45 RP
+                currentRP < 2200 -> -60 // 雀豪 四位 -60 RP
+                else -> -80             // 雀聖/雀神 四位 -80 RP
+            }
+            else -> 0
         }
     }
 
     fun getLeaderboard(limit: Int = 10): List<MahjongPlayerStats> = synchronized(stateLock) {
         statsCache.values
             .filter { it.totalMatches > 0 }
-            .sortedByDescending { it.totalNetScore }
+            .sortedWith(compareByDescending<MahjongPlayerStats> { it.ratingPoints }.thenByDescending { it.winRate })
             .take(limit)
     }
 
@@ -181,6 +218,8 @@ class MahjongStatsManager(private val dataFolder: File) {
             thirdPlaces = yaml.getInt("thirdPlaces", 0),
             fourthPlaces = yaml.getInt("fourthPlaces", 0),
             totalNetScore = yaml.getInt("totalNetScore", 0),
+            ratingPoints = yaml.getInt("ratingPoints", 1000),
+            highestRatingPoints = yaml.getInt("highestRatingPoints", yaml.getInt("ratingPoints", 1000)),
             totalHands = yaml.getInt("totalHands", 0),
             tsumoCount = yaml.getInt("tsumoCount", 0),
             ronCount = yaml.getInt("ronCount", 0),
@@ -196,6 +235,7 @@ class MahjongStatsManager(private val dataFolder: File) {
                 timestamp = (map["timestamp"] as? Number)?.toLong() ?: 0L,
                 rank = (map["rank"] as? Number)?.toInt() ?: 1,
                 scoreDelta = (map["scoreDelta"] as? Number)?.toInt() ?: 0,
+                rpDelta = (map["rpDelta"] as? Number)?.toInt() ?: 0,
                 taiWon = (map["taiWon"] as? Number)?.toInt() ?: 0,
                 summary = map["summary"] as? String ?: "",
             )
@@ -226,6 +266,8 @@ class MahjongStatsManager(private val dataFolder: File) {
             set("thirdPlaces", stats.thirdPlaces)
             set("fourthPlaces", stats.fourthPlaces)
             set("totalNetScore", stats.totalNetScore)
+            set("ratingPoints", stats.ratingPoints)
+            set("highestRatingPoints", stats.highestRatingPoints)
             set("totalHands", stats.totalHands)
             set("tsumoCount", stats.tsumoCount)
             set("ronCount", stats.ronCount)
@@ -240,6 +282,7 @@ class MahjongStatsManager(private val dataFolder: File) {
                     "timestamp" to it.timestamp,
                     "rank" to it.rank,
                     "scoreDelta" to it.scoreDelta,
+                    "rpDelta" to it.rpDelta,
                     "taiWon" to it.taiWon,
                     "summary" to it.summary,
                 )
