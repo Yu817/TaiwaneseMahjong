@@ -8,7 +8,9 @@ import com.mahjongplay.game.BotDifficulty
 import com.mahjongplay.game.GameStatus
 import com.mahjongplay.game.MahjongBot
 import com.mahjongplay.game.MahjongGame
+import com.mahjongplay.interaction.ActionBarHUD
 import com.mahjongplay.interaction.GameRegistry
+import com.mahjongplay.interaction.MahjongChatFormat
 import com.mahjongplay.interaction.PaperGameBridge
 import com.mahjongplay.model.MahjongRule
 import com.mahjongplay.model.Wind
@@ -91,6 +93,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         displayRepairTaskId = Bukkit.getScheduler().runTaskTimer(
             MahjongPlayPlugin.instance,
             Runnable {
+                checkPlayersDistance()
                 tables.values.forEach { session ->
                     if (!session.center.isChunkLoaded) return@forEach
                     session.table.spawn()
@@ -157,11 +160,12 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         val bridge = PaperGameBridge(game, renderer, this)
         game.listener = bridge
 
-        val modeText = "台麻·${rule.displayLengthText}"
-        val existingNums = tables.values.map { it.humanId.substringAfterLast("]").removeSuffix("號桌").toIntOrNull() ?: 0 }.toSet()
+        val existingNums = tables.values.mapNotNull {
+            it.humanId.filter { ch -> ch.isDigit() }.toIntOrNull()
+        }.toSet()
         var tableNum = 1
         while (tableNum in existingNums) tableNum++
-        val humanId = "[$modeText]${tableNum}號桌"
+        val humanId = "$tableNum"
 
         val session = MahjongTableSession(
             tableId = game.tableId,
@@ -169,7 +173,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
             renderer = renderer,
             bridge = bridge,
             center = center,
-            table = MahjongTable(center, modeText, 4, rule.chairsEnabled, settings.tableScale),
+            table = MahjongTable(center, rule.displayLengthText, 4, rule.chairsEnabled, settings.tableScale, humanId),
             humanId = humanId
         )
 
@@ -189,7 +193,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         if (playerToTable.containsKey(playerUUID)) return false
         val session = tables[tableId] ?: return false
 
-        // 若該玩家先前在對局中離開/斷線被託管，此處無縫接管恢復手動
+        // 若該玩家先前在對局中離開/斷線被代打，此處無縫接管恢復手動
         if (session.game.status == GameStatus.PLAYING) {
             val existing = session.game.players.find { it.uuid == playerUUID } as? com.mahjongplay.game.MahjongPlayer
             if (existing != null && existing.isBotTakeover) {
@@ -203,7 +207,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
                     teleportSinglePlayerToSeat(session, existing, bp)
                 }
                 session.bridge.broadcast(
-                    Component.text("[麻將] 玩家【${existing.rawDisplayName}】重新返回牌桌，已解除託管恢復手動操作！", NamedTextColor.GREEN)
+                    Component.text("[麻將] 玩家【${existing.rawDisplayName}】重新返回牌桌，已解除代打恢復手動操作！", NamedTextColor.GREEN)
                 )
                 return true
             }
@@ -237,6 +241,20 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
 
     fun getSettingsOptionTarget(interactionUUID: UUID): SettingsOptionTarget? =
         settingsOptionToTarget[interactionUUID]
+
+    fun getTableByTableTopBlock(blockLocation: Location): MahjongTableSession? =
+        tables.values.firstOrNull { it.table.isTableTopBlock(blockLocation) }
+
+    fun getTableByTableEntity(entity: org.bukkit.entity.Entity): MahjongTableSession? {
+        val tag = entity.scoreboardTags.firstOrNull { it.startsWith("taiwanese_mahjong_table_") }
+        if (tag != null) {
+            val sessionByTag = tables.values.firstOrNull { it.table.hasOwnershipTag(tag) }
+            if (sessionByTag != null) return sessionByTag
+        }
+        return tables.values.firstOrNull {
+            it.center.world == entity.world && it.center.distanceSquared(entity.location) <= 16.0
+        }
+    }
 
     /**
      * Join and sit when a player right-clicks the exact barrier block under a
@@ -408,19 +426,58 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
                 )
                 session.game.end()
                 session.game.players.clear()
+                resetTableToDefaults(session)
             }
         } else {
             session.game.leave(playerUUID)
             if (session.game.realPlayers.isEmpty()) {
-                session.game.players.removeAll { it is MahjongBot }
+                resetTableToDefaults(session)
+            } else {
+                if (session.ownerUUID == playerUUID) {
+                    session.ownerUUID = session.game.realPlayers.firstOrNull()?.uuid
+                }
+                cancelCountdown(session.tableId)
+                updateTableDisplay(session)
             }
-            if (session.ownerUUID == playerUUID) {
-                session.ownerUUID = session.game.realPlayers.firstOrNull()?.uuid
-            }
-            cancelCountdown(session.tableId)
-            updateTableDisplay(session)
         }
         return true
+    }
+
+    fun resetTableToDefaults(session: MahjongTableSession) {
+        val defaultRule = settings.createRule()
+        val rule = session.game.rule
+        rule.moneyMatch = defaultRule.moneyMatch
+        rule.roundsToPlay = defaultRule.roundsToPlay
+        rule.basePoints = defaultRule.basePoints
+        rule.pointsPerTai = defaultRule.pointsPerTai
+        rule.thinkingTime = defaultRule.thinkingTime
+        rule.flowersEnabled = defaultRule.flowersEnabled
+        rule.chairsEnabled = defaultRule.chairsEnabled
+        rule.botsEnabled = defaultRule.botsEnabled
+        rule.defaultBotDifficulty = defaultRule.defaultBotDifficulty
+        rule.botResponseDelayMs = defaultRule.botResponseDelayMs
+        rule.seatWindDrawEnabled = defaultRule.seatWindDrawEnabled
+        rule.spectatorSeeHands = defaultRule.spectatorSeeHands
+
+        session.ownerUUID = null
+        val bots = session.game.players.filter { !it.isRealPlayer }
+        bots.forEach { bot ->
+            session.game.leave(bot.uuid)
+            playerToTable.remove(bot.uuid)
+        }
+        cancelCountdown(session.tableId)
+        updateTableDisplay(session)
+        autoSave()
+    }
+
+    fun resetAllTablesToDefaults() {
+        tables.values.forEach { session ->
+            if (session.game.status == GameStatus.PLAYING) {
+                cancelGame(session)
+            }
+            resetTableToDefaults(session)
+        }
+        autoSave()
     }
 
     fun cancelGame(session: MahjongTableSession): Boolean {
@@ -445,7 +502,11 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         }
 
         session.table.updateTurnDisplay(null)
-        updateTableDisplay(session)
+        if (session.game.realPlayers.isEmpty()) {
+            resetTableToDefaults(session)
+        } else {
+            updateTableDisplay(session)
+        }
         session.table.showActionButtons()
         registerJoinInteraction(session)
 
@@ -476,18 +537,22 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
 
     fun updateTableDisplay(session: MahjongTableSession) {
         val isWaiting = session.game.status == GameStatus.WAITING
+        session.table.humanId = session.humanId
         session.table.gameLengthText = session.game.rule.displayLengthText
         session.table.applyChairsEnabled(session.game.rule.chairsEnabled)
-        session.table.updatePublicSettingsDisplay(
-            if (isWaiting) publicSettingsPanelText(session) else null
-        )
-        val playerInfo = session.game.players.map {
+        val rule = session.game.rule
+        val modeBadge = if (rule.moneyMatch) "§e💰 真金對戰" else "§a🎮 休閒娛樂"
+        val unit = if (rule.moneyMatch) "$" else ""
+        session.table.ruleInfoText = "$modeBadge §8︳§f${rule.displayCircleText} §8︳§6$unit${rule.basePoints}底 / $unit${rule.pointsPerTai}台"
+        session.table.updatePublicSettingsDisplay(null)
+        val displayPlayers = if (isWaiting) session.game.realPlayers else session.game.players
+        val playerInfo = displayPlayers.map {
             val name = if (it.uuid == session.ownerUUID) "♛ ${it.displayName}" else it.displayName
             name to it.ready
         }
         val buttonAnchor = buttonAnchorFor(session)
         session.table.updateJoinDisplay(
-            playerCount = session.game.players.size,
+            playerCount = displayPlayers.size,
             maxPlayers = session.game.rule.playerCount,
             waiting = isWaiting,
             playerInfo = playerInfo,
@@ -1069,8 +1134,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
                 }, 2L)
             }
 
-            val windIndex = (Wind.entries.size - ((game.round.round + seatIndex) % Wind.entries.size)) % Wind.entries.size
-            val wind = Wind.entries[windIndex]
+            val wind = ActionBarHUD.seatWindOf(game, mjPlayer)
             player.sendMessage(
                 Component.text("[麻將] ", NamedTextColor.GOLD)
                     .append(Component.text("座位已安排：${wind.displayName}家", NamedTextColor.AQUA))
@@ -1184,19 +1248,74 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
 
     fun reseatPlayers(game: MahjongGame) {
         val session = tables[game.tableId] ?: return
+        if (!settings.teleportPlayersOnStart) return
+        session.table.releaseAllChairPassengers()
         game.realPlayers.forEach { mjPlayer ->
             val uuid = runCatching { UUID.fromString(mjPlayer.uuid) }.getOrNull() ?: return@forEach
             val player = Bukkit.getPlayer(uuid) ?: return@forEach
-            val newSeatLoc = getSeatLocation(game, mjPlayer.uuid) ?: return@forEach
-            player.teleport(newSeatLoc)
             val seatIndex = game.seat.indexOfFirst { it.uuid == mjPlayer.uuid }
-            val windName = com.mahjongplay.model.Wind.entries.getOrNull(seatIndex)?.displayName ?: ""
+            if (seatIndex < 0) return@forEach
+            val newSeatLoc = getSeatLocation(game, mjPlayer.uuid) ?: return@forEach
+            player.leaveVehicle()
+            player.teleport(newSeatLoc)
+            if (game.rule.chairsEnabled) {
+                Bukkit.getScheduler().runTaskLater(MahjongPlayPlugin.instance, Runnable {
+                    if (player.isValid && !player.isInsideVehicle) {
+                        session.table.sitPlayerAtGameSeat(seatIndex, player)
+                    }
+                }, 2L)
+            }
+            val wind = ActionBarHUD.seatWindOf(game, mjPlayer)
             player.sendMessage(
                 Component.text("[麻將] ", NamedTextColor.GOLD)
-                    .append(Component.text("您已就任【${windName}家】座位！", NamedTextColor.GREEN))
+                    .append(Component.text("您已就任【${wind.displayName}家】座位！", NamedTextColor.GREEN))
             )
         }
         updateTableDisplay(session)
+    }
+
+    fun checkPlayersDistance() {
+        val maxDist = settings.maxQueueDistance
+        if (maxDist <= 0.0) return
+        val maxDistSq = maxDist * maxDist
+
+        tables.values.forEach { session ->
+            if (session.game.status == GameStatus.WAITING) {
+                session.game.realPlayers.toList().forEach { player ->
+                    val p = Bukkit.getPlayer(UUID.fromString(player.uuid))
+                    if (p == null || !p.isOnline) return@forEach
+                    val loc = p.location
+                    if (loc.world != session.center.world || loc.distanceSquared(session.center) > maxDistSq) {
+                        leaveTable(player.uuid)
+                        runCatching { UUID.fromString(player.uuid) }.getOrNull()?.let { releasePlayerFromChairs(it) }
+                        p.sendMessage(
+                            Component.text("[麻將] ", NamedTextColor.GOLD)
+                                .append(Component.text("你已離開牌桌過遠（超過 ${maxDist.toInt()} 格），已自動退出列隊。", NamedTextColor.RED))
+                        )
+                    }
+                }
+            } else if (session.game.status == GameStatus.PLAYING) {
+                session.game.players.filterIsInstance<com.mahjongplay.game.MahjongPlayer>().forEach { player ->
+                    if (player.isBotTakeover) return@forEach
+                    val p = Bukkit.getPlayer(UUID.fromString(player.uuid))
+                    if (p == null || !p.isOnline) return@forEach
+                    val loc = p.location
+                    if (loc.world != session.center.world || loc.distanceSquared(session.center) > maxDistSq) {
+                        player.activateBotTakeover(session.game.rule.defaultBotDifficulty)
+                        session.renderer.updateSeatScoreDisplays()
+                        session.renderer.updateVisibility(player)
+                        session.bridge.updateHud()
+                        session.bridge.broadcast(
+                            Component.text("[麻將] 玩家【${player.rawDisplayName}】離開牌桌過遠，已自動切換為 🤖 代打模式！", NamedTextColor.GOLD)
+                        )
+                        p.sendMessage(
+                            Component.text("[麻將] ", NamedTextColor.GOLD)
+                                .append(Component.text("你因離開牌桌過遠，系統已自動為你開啟 🤖 代打模式！(返回牌桌或按 F 鍵可恢復手動)", NamedTextColor.YELLOW))
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun checkAutoStart(session: MahjongTableSession) {
@@ -1320,6 +1439,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
                 "defaultBotDifficulty" to session.game.rule.defaultBotDifficulty.name,
                 "seatWindDrawEnabled" to session.game.rule.seatWindDrawEnabled,
                 "spectatorSeeHands" to session.game.rule.spectatorSeeHands,
+                "moneyMatch" to session.game.rule.moneyMatch,
             )
             if (session.game.status == GameStatus.PLAYING) {
                 map["playingPlayers"] = session.game.realPlayers.map { it.uuid }
@@ -1393,6 +1513,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
                 } ?: this.defaultBotDifficulty
                 this.seatWindDrawEnabled = map["seatWindDrawEnabled"] as? Boolean ?: this.seatWindDrawEnabled
                 this.spectatorSeeHands = map["spectatorSeeHands"] as? Boolean ?: this.spectatorSeeHands
+                this.moneyMatch = map["moneyMatch"] as? Boolean ?: this.moneyMatch
             }
 
             @Suppress("UNCHECKED_CAST")
@@ -1403,6 +1524,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
             val session = createTable(center, "", "", rule)
             session.table.spawn()
             registerJoinInteraction(session)
+            updateTableDisplay(session)
         }
         loading = false
     }
@@ -1476,7 +1598,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         session.bridge.updateHud()
         teleportSinglePlayerToSeat(session, mjPlayer, player)
         session.bridge.broadcast(
-            Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】重新連線回到牌桌，已解除託管恢復手動操作！", NamedTextColor.GREEN)
+            Component.text("§8[§6🀄 §b§l台灣麻將§8] §f雀友 §b§l【${mjPlayer.rawDisplayName}】 §a重新連線回到牌桌，已解除代打恢復手動操作！")
         )
     }
 
@@ -1489,15 +1611,15 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         val mjPlayer = session.game.players.find { it.uuid == uuid } as? com.mahjongplay.game.MahjongPlayer ?: return false
         if (!mjPlayer.isBotTakeover) {
             mjPlayer.activateBotTakeover(session.game.rule.defaultBotDifficulty)
-            player.sendMessage(Component.text("[麻將] 🤖 已開啟託管代打模式！(再按一次 F 可解除託管)", NamedTextColor.YELLOW))
+            player.sendMessage(Component.text("[麻將] 🤖 已開啟代打模式！(再按一次 F 可解除代打)", NamedTextColor.YELLOW))
             session.bridge.broadcast(
-                Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】已切換為 🤖 託管代打模式！", NamedTextColor.GOLD)
+                Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】已切換為 🤖 代打模式！", NamedTextColor.GOLD)
             )
         } else {
             mjPlayer.deactivateBotTakeover()
-            player.sendMessage(Component.text("[麻將] 🀄 已解除託管代打，恢復手動操作！", NamedTextColor.GREEN))
+            player.sendMessage(Component.text("[麻將] 🀄 已解除代打，恢復手動操作！", NamedTextColor.GREEN))
             session.bridge.broadcast(
-                Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】已解除託管恢復手動操作！", NamedTextColor.GREEN)
+                Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】已解除代打恢復手動操作！", NamedTextColor.GREEN)
             )
         }
         session.renderer.updateSeatScoreDisplays()
@@ -1514,8 +1636,7 @@ class MahjongTableManager(var settings: MahjongSettings) : GameRegistry {
         if (interruptedPlayers.remove(playerUUID)) {
             Bukkit.getScheduler().runTaskLater(MahjongPlayPlugin.instance, Runnable {
                 playerBukkit.sendMessage(
-                    Component.text("[麻將] ", NamedTextColor.GOLD)
-                        .append(Component.text("你之前的牌局因伺服器重啟而中斷，很抱歉！", NamedTextColor.YELLOW))
+                    MahjongChatFormat.warn("你之前的牌局因伺服器重啟或異常而中斷，敬請見諒！")
                 )
             }, 40L)
         }

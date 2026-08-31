@@ -66,7 +66,7 @@ class PaperGameBridge(
                         Title.title(
                             Component.text("【開局抓位・抓風】", NamedTextColor.GOLD)
                                 .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
-                            Component.text("請依序抽取風牌！(按【F 鍵】可開啟 🤖 託管代打)", NamedTextColor.GREEN),
+                            Component.text("請依序抽取風牌！(按【F 鍵】可開啟 🤖 代打模式)", NamedTextColor.GREEN),
                             Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(3), Duration.ofMillis(500))
                         )
                     )
@@ -76,7 +76,7 @@ class PaperGameBridge(
                         Title.title(
                             Component.text("${wind?.displayName ?: "?"}家", NamedTextColor.GOLD)
                                 .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
-                            Component.text("你的牌就在面前 • 按【F 鍵】可開啟 🤖 託管代打", NamedTextColor.GREEN),
+                            Component.text("你的牌就在面前 • 按【F 鍵】可開啟 🤖 代打模式", NamedTextColor.GREEN),
                             Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(3), Duration.ofMillis(500))
                         )
                     )
@@ -100,7 +100,7 @@ class PaperGameBridge(
             val title = Title.title(
                 Component.text(round.displayName(), NamedTextColor.GOLD).decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
                 Component.text(
-                    "${wind?.displayName ?: "?"}家  •  連莊${round.honba}  •  按【F 鍵】開啟託管代打",
+                    "${wind?.displayName ?: "?"}家  •  連莊${round.honba}  •  按【F 鍵】開啟代打",
                     NamedTextColor.YELLOW
                 ),
                 Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofMillis(500))
@@ -127,8 +127,13 @@ class PaperGameBridge(
     }
 
     override fun onSeatWindDrawCompleted(event: SeatWindDrawCompleteEvent) {
-        renderer.onSeatWindDrawCompleted(event)
-        updateHud()
+        val task = Runnable {
+            tableManager.reseatPlayers(game)
+            renderer.onSeatWindDrawCompleted(event)
+            updateHud()
+        }
+        if (Bukkit.isPrimaryThread()) task.run()
+        else Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, task)
     }
 
     override fun onWallInitialized(event: WallInitializedEvent) {
@@ -262,7 +267,17 @@ class PaperGameBridge(
             Component.text("$label！", NamedTextColor.DARK_AQUA),
             Component.text(player.displayName, NamedTextColor.AQUA),
         )
-        broadcast(MahjongChatFormat.kan(player.displayName, kanType, tile))
+        if (kanType == "ankan") {
+            forEachPlayer { p ->
+                if (p.uniqueId.toString() == player.uuid) {
+                    p.sendMessage(MahjongChatFormat.kan(player.displayName, kanType, tile))
+                } else {
+                    p.sendMessage(MahjongChatFormat.ankanHidden(player.displayName))
+                }
+            }
+        } else {
+            broadcast(MahjongChatFormat.kan(player.displayName, kanType, tile))
+        }
     }
 
     override fun onTsumo(player: MahjongPlayerBase, tile: MahjongTile, settlement: TaiwanSettlement) {
@@ -390,7 +405,7 @@ class PaperGameBridge(
             turnTimerBar.cleanup()
             stopTurnParticleTask()
             tableManager.resetCenterInspection(game)
-            // 剃除因離線而託管的玩家，避免永遠卡在牌桌隊列中
+            // 剃除因離線而代打的玩家，避免永遠卡在牌桌隊列中
             val offlinePlayers = game.players.filterIsInstance<MahjongPlayer>().filter {
                 it.isQuitOffline || (Bukkit.getPlayer(UUID.fromString(it.uuid))?.isOnline != true)
             }
@@ -400,10 +415,14 @@ class PaperGameBridge(
             }
 
             tableManager.getSession(game.tableId)?.let {
-                it.table.updateTurnDisplay(null)
-                tableManager.updateTableDisplay(it)
-                it.table.showActionButtons()
-                tableManager.registerJoinInteraction(it)
+                if (it.game.realPlayers.isEmpty()) {
+                    tableManager.resetTableToDefaults(it)
+                } else {
+                    it.table.updateTurnDisplay(null)
+                    tableManager.updateTableDisplay(it)
+                    it.table.showActionButtons()
+                    tableManager.registerJoinInteraction(it)
+                }
             }
             MahjongChatFormat.gameEndPodium(scoreList).forEach(::broadcast)
         }

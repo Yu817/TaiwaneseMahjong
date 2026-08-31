@@ -35,7 +35,7 @@ class MahjongPlayer(
     var botDifficulty: BotDifficulty = BotDifficulty.MEDIUM
 
     override val displayName: String
-        get() = if (isBotTakeover) "🤖 [託管] $rawDisplayName" else rawDisplayName
+        get() = if (isBotTakeover) "🤖 [代打] $rawDisplayName" else rawDisplayName
 
     override val isRealPlayer: Boolean
         get() = !isBotTakeover

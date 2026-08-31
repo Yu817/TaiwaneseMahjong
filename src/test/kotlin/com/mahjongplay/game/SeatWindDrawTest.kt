@@ -64,4 +64,30 @@ class SeatWindDrawTest {
         val rule = MahjongRule()
         assertTrue(rule.seatWindDrawEnabled)
     }
+
+    @Test
+    fun testSeatWindCalculations() {
+        val game = MahjongGame().apply {
+            join("uuid-1", "Player1")
+            join("uuid-2", "Player2")
+            join("uuid-3", "Player3")
+            join("uuid-4", "Player4")
+        }
+        game.seat = game.players.toMutableList()
+
+        // Round 0 (East 1):
+        // seat[0] is East, seat[1] is South, seat[2] is West, seat[3] is North
+        assertEquals(com.mahjongplay.model.Wind.EAST, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[0]))
+        assertEquals(com.mahjongplay.model.Wind.SOUTH, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[1]))
+        assertEquals(com.mahjongplay.model.Wind.WEST, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[2]))
+        assertEquals(com.mahjongplay.model.Wind.NORTH, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[3]))
+
+        // Round 1 (East 2):
+        game.round.round = 1
+        // seat[1] is East (dealer), seat[2] is South, seat[3] is West, seat[0] is North
+        assertEquals(com.mahjongplay.model.Wind.NORTH, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[0]))
+        assertEquals(com.mahjongplay.model.Wind.EAST, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[1]))
+        assertEquals(com.mahjongplay.model.Wind.SOUTH, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[2]))
+        assertEquals(com.mahjongplay.model.Wind.WEST, com.mahjongplay.interaction.ActionBarHUD.seatWindOf(game, game.seat[3]))
+    }
 }

@@ -1,4 +1,4 @@
-package com.mahjongplay.model
+﻿package com.mahjongplay.model
 
 import com.mahjongplay.util.TextFormatting
 import net.kyori.adventure.text.Component
@@ -7,8 +7,8 @@ import net.kyori.adventure.text.format.NamedTextColor
 /**
  * 台灣麻將規則。
  *
- * 預設採 4 人、16 張手牌、144 張牌、最低一台起胡、每台 1000 籌碼。
- * 每筆支付使用底台制：底 + 台數 × 每台籌碼。
+ * 預設採 4 人、16 張手牌、144 張牌、最低一台起胡、每台 100 籌碼。
+ * 每筆支付使用底台制：底 (300) + 台數 × 每台籌碼 (100)。
  */
 data class MahjongRule(
     var length: GameLength = GameLength.TWO_WIND,
@@ -20,10 +20,10 @@ data class MahjongRule(
     var spectate: Boolean = true,
     // Number of non-dealer-repeat hands. 1 = 1/4 circle, 16 = a full 4-circle game.
     var roundsToPlay: Int = 16,
-    var basePoints: Int = 0,
-    var pointsPerTai: Int = 1000,
+    var basePoints: Int = 300,
+    var pointsPerTai: Int = 100,
     var flowersEnabled: Boolean = true,
-    var chairsEnabled: Boolean = true,
+    var chairsEnabled: Boolean = false,
     var botResponseDelayMs: Long = MIN_BOT_RESPONSE_MS,
     /** Normal turn and replacement draw travel time; 0 keeps the flow instant. */
     var drawAnimationMs: Long = DEFAULT_DRAW_ANIMATION_MS,
@@ -85,8 +85,6 @@ data class MahjongRule(
                 .append(Component.text("$basePoints／$pointsPerTai 積分", NamedTextColor.GREEN)),
             Component.text(" • 花牌補牌: ", NamedTextColor.YELLOW)
                 .append(if (flowersEnabled) enabled else disabled),
-            Component.text(" • 椅子: ", NamedTextColor.YELLOW)
-                .append(if (chairsEnabled) enabled else disabled),
             Component.text(" • Bots 機器人: ", NamedTextColor.YELLOW)
                 .append(if (botsEnabled) Component.text("開啟（${defaultBotDifficulty.displayName}・${botSeconds}秒）", NamedTextColor.GREEN) else disabled),
             Component.text(" • 旁觀: ", NamedTextColor.YELLOW)

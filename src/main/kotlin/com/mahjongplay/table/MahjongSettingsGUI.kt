@@ -39,7 +39,7 @@ object MahjongSettingsGUI {
 
     fun open(player: Player, session: MahjongTableSession, manager: MahjongTableManager) {
         if (session.game.status != GameStatus.WAITING) {
-            player.sendMessage(Component.text("[麻將] 遊戲進行中，無法修改設定。", NamedTextColor.RED))
+            player.sendMessage(MahjongChatFormat.warn("遊戲進行中，無法修改牌桌規則。"))
             return
         }
 
@@ -87,7 +87,7 @@ object MahjongSettingsGUI {
             ),
             Component.text("🧭 開局抓風：", NamedTextColor.GOLD).append(Component.text(if (rule.seatWindDrawEnabled) "開啟 ✓" else "關閉 ✗", if (rule.seatWindDrawEnabled) NamedTextColor.GREEN else NamedTextColor.RED)),
             Component.text("🌸 花牌規則：", NamedTextColor.LIGHT_PURPLE).append(Component.text(if (rule.flowersEnabled) "開啟 ✓" else "關閉 ✗", if (rule.flowersEnabled) NamedTextColor.GREEN else NamedTextColor.RED)),
-            Component.text("🪑 實體坐椅：", NamedTextColor.LIGHT_PURPLE).append(Component.text(if (rule.chairsEnabled) "開啟 ✓" else "關閉 ✗", if (rule.chairsEnabled) NamedTextColor.GREEN else NamedTextColor.RED)),
+            Component.text("👁 旁觀看牌：", NamedTextColor.BLUE).append(Component.text(if (rule.spectatorSeeHands) "允許看牌 ✓" else "隱藏手牌 ✗", if (rule.spectatorSeeHands) NamedTextColor.GREEN else NamedTextColor.RED)),
             Component.text(" "),
             if (owner) {
                 Component.text("💡 提示：點擊下方圖示可修改或切換設定！", NamedTextColor.YELLOW)
@@ -256,7 +256,7 @@ object MahjongSettingsGUI {
             inv.setItem(25, grayBorder)
         }
 
-        // Row 4: 抓風、花牌、椅子、重設 (Slots 28, 30, 32, 34)
+        // Row 4: 抓風、花牌、重設 (Slots 28, 30, 34)
         val windToggleLore = mutableListOf<Component>()
         windToggleLore += Component.text("開局抓風選位設定：", NamedTextColor.GRAY)
         if (rule.seatWindDrawEnabled) {
@@ -293,23 +293,23 @@ object MahjongSettingsGUI {
 
         inv.setItem(30, createItem(Material.POPPY, Component.text("🌸 8張花牌規則", NamedTextColor.LIGHT_PURPLE).decorate(TextDecoration.BOLD), flowerToggleLore))
 
-        val chairToggleLore = mutableListOf<Component>()
-        chairToggleLore += Component.text("實體座椅設定：", NamedTextColor.GRAY)
-        if (rule.chairsEnabled) {
-            chairToggleLore += Component.text(" ➤ ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
-                .append(Component.text("開啟（生成實體椅子可坐下）", NamedTextColor.GREEN).decorate(TextDecoration.BOLD))
+        val spectatorToggleLore = mutableListOf<Component>()
+        spectatorToggleLore += Component.text("旁觀看牌設定：", NamedTextColor.GRAY)
+        if (rule.spectatorSeeHands) {
+            spectatorToggleLore += Component.text(" ➤ ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
+                .append(Component.text("允許看牌（非本桌玩家可看手牌）", NamedTextColor.BLUE).decorate(TextDecoration.BOLD))
                 .append(Component.text(" ✔", NamedTextColor.GREEN))
-            chairToggleLore += Component.text("    關閉（無椅子模型）", NamedTextColor.DARK_GRAY)
+            spectatorToggleLore += Component.text("    隱藏手牌（旁觀者只看見牌背）", NamedTextColor.DARK_GRAY)
         } else {
-            chairToggleLore += Component.text("    開啟（生成實體椅子可坐下）", NamedTextColor.DARK_GRAY)
-            chairToggleLore += Component.text(" ➤ ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
-                .append(Component.text("關閉（無椅子模型）", NamedTextColor.RED).decorate(TextDecoration.BOLD))
+            spectatorToggleLore += Component.text("    允許看牌（非本桌玩家可看手牌）", NamedTextColor.DARK_GRAY)
+            spectatorToggleLore += Component.text(" ➤ ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD)
+                .append(Component.text("隱藏手牌（旁觀者只看見牌背）", NamedTextColor.RED).decorate(TextDecoration.BOLD))
                 .append(Component.text(" ✔", NamedTextColor.GREEN))
         }
-        chairToggleLore += Component.text(" ")
-        chairToggleLore += Component.text("▶ 點擊切換實體座椅", NamedTextColor.YELLOW)
+        spectatorToggleLore += Component.text(" ")
+        spectatorToggleLore += Component.text("▶ 點擊切換旁觀看牌權限", NamedTextColor.YELLOW)
 
-        inv.setItem(32, createItem(Material.OAK_STAIRS, Component.text("🪑 實體坐椅", NamedTextColor.LIGHT_PURPLE).decorate(TextDecoration.BOLD), chairToggleLore))
+        inv.setItem(32, createItem(Material.ENDER_EYE, Component.text("👁 旁觀看牌", NamedTextColor.BLUE).decorate(TextDecoration.BOLD), spectatorToggleLore))
 
         inv.setItem(
             34,
@@ -363,13 +363,13 @@ object MahjongSettingsGUI {
                     if (audience is Player) {
                         val raw = response.getText("value")?.trim()?.replace(",", "")?.toIntOrNull()
                         if (raw == null || raw !in 0..MahjongRule.MAX_POINTS) {
-                            audience.sendMessage(Component.text("[麻將] 底金積分必須是 0～${MahjongRule.MAX_POINTS} 的整數。", NamedTextColor.RED))
+                            audience.sendMessage(MahjongChatFormat.error("底金積分必須是 0～${MahjongRule.MAX_POINTS} 的整數。"))
                         } else {
                             val updated = session.game.rule.copy(basePoints = raw)
                             session.game.changeRules(updated)
                             manager.updateTableDisplay(session)
                             manager.autoSave()
-                            audience.sendMessage(Component.text("[麻將] 底金積分已設定為：${raw} 分！", NamedTextColor.GREEN))
+                            audience.sendMessage(MahjongChatFormat.success("底金積分已成功設定為：${raw} 分！"))
                         }
                         Bukkit.getScheduler().runTaskLater(MahjongPlayPlugin.instance, Runnable {
                             open(audience, session, manager)
@@ -425,13 +425,13 @@ object MahjongSettingsGUI {
                     if (audience is Player) {
                         val raw = response.getText("value")?.trim()?.replace(",", "")?.toIntOrNull()
                         if (raw == null || raw !in 0..MahjongRule.MAX_POINTS) {
-                            audience.sendMessage(Component.text("[麻將] 每台積分必須是 0～${MahjongRule.MAX_POINTS} 的整數。", NamedTextColor.RED))
+                            audience.sendMessage(MahjongChatFormat.error("每台積分必須是 0～${MahjongRule.MAX_POINTS} 的整數。"))
                         } else {
                             val updated = session.game.rule.copy(pointsPerTai = raw)
                             session.game.changeRules(updated)
                             manager.updateTableDisplay(session)
                             manager.autoSave()
-                            audience.sendMessage(Component.text("[麻將] 每台積分已設定為：${raw} 分！", NamedTextColor.GREEN))
+                            audience.sendMessage(MahjongChatFormat.success("每台積分已成功設定為：${raw} 分！"))
                         }
                         Bukkit.getScheduler().runTaskLater(MahjongPlayPlugin.instance, Runnable {
                             open(audience, session, manager)
@@ -501,7 +501,7 @@ class MahjongSettingsGUIListener(private val manager: MahjongTableManager) : Lis
                 ?: return
 
             if (session.game.status != GameStatus.WAITING) {
-                player.sendMessage(Component.text("[麻將] 遊戲進行中，無法修改設定。", NamedTextColor.RED))
+                player.sendMessage(MahjongChatFormat.warn("遊戲進行中，無法修改牌桌規則。"))
                 player.closeInventory()
                 return
             }
@@ -514,7 +514,7 @@ class MahjongSettingsGUIListener(private val manager: MahjongTableManager) : Lis
 
             if (!manager.isTableOwner(session, player.uniqueId.toString())) {
                 player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_BASS, 1.0f, 0.8f)
-                player.sendMessage(Component.text("[麻將] 只有桌主可以修改牌桌設定。", NamedTextColor.RED))
+                player.sendMessage(MahjongChatFormat.error("只有桌主可以修改牌桌規則設定。"))
                 return
             }
 
@@ -522,6 +522,10 @@ class MahjongSettingsGUIListener(private val manager: MahjongTableManager) : Lis
             when (rawSlot) {
                 10 -> { // 對戰模式 (金幣局 / 娛樂局)
                     updated.moneyMatch = !updated.moneyMatch
+                    if (updated.moneyMatch && updated.basePoints == 0) {
+                        updated.basePoints = 300
+                        updated.pointsPerTai = 100
+                    }
                     player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.8f, 1.2f)
                 }
                 12 -> { // 圈數
@@ -576,8 +580,9 @@ class MahjongSettingsGUIListener(private val manager: MahjongTableManager) : Lis
                     updated.flowersEnabled = !updated.flowersEnabled
                     player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.8f, 1.2f)
                 }
-                32 -> { // 椅子
-                    updated.chairsEnabled = !updated.chairsEnabled
+                32 -> { // 旁觀看牌
+                    updated.spectatorSeeHands = !updated.spectatorSeeHands
+                    session.game.players.forEach { session.renderer.updateVisibility(it) }
                     player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.8f, 1.2f)
                 }
                 34 -> { // 還原預設
@@ -589,7 +594,7 @@ class MahjongSettingsGUIListener(private val manager: MahjongTableManager) : Lis
                     updated.defaultBotDifficulty = defaultRule.defaultBotDifficulty
                     updated.botResponseDelayMs = defaultRule.botResponseDelayMs
                     updated.flowersEnabled = defaultRule.flowersEnabled
-                    updated.chairsEnabled = defaultRule.chairsEnabled
+                    updated.chairsEnabled = false
                     updated.seatWindDrawEnabled = defaultRule.seatWindDrawEnabled
                     updated.spectatorSeeHands = defaultRule.spectatorSeeHands
                     updated.basePoints = defaultRule.basePoints

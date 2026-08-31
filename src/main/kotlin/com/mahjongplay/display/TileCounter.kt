@@ -1,4 +1,4 @@
-﻿package com.mahjongplay.display
+package com.mahjongplay.display
 
 import com.mahjongplay.game.MahjongGame
 import com.mahjongplay.game.MahjongPlayerBase
@@ -24,7 +24,10 @@ object TileCounter {
         var seen = 0
         seen += player.hands.count { it == targetTile }
         seen += game.seat.sumOf { s -> s.discardedTiles.count { it == targetTile } }
-        seen += game.seat.sumOf { s -> s.fuuroList.sumOf { f -> f.tiles.count { it == targetTile } } }
+        seen += game.seat.sumOf { s ->
+            s.fuuroList.filter { f -> f.isOpen || s.uuid == player.uuid }
+                .sumOf { f -> f.tiles.count { it == targetTile } }
+        }
         seen += game.seat.sumOf { s -> s.flowerTiles.count { it == targetTile } }
         return (total - seen).coerceAtLeast(0)
     }

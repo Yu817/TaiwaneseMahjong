@@ -16,8 +16,8 @@ data class MahjongSettings(
     val defaultBotResponseMs: Long = MahjongRule.MIN_BOT_RESPONSE_MS,
     /** Standard Taiwanese Mahjong starting score for each seat. */
     val defaultStartingPoints: Int = 0,
-    val defaultBasePoints: Int = 0,
-    val defaultPointsPerTai: Int = 1000,
+    val defaultBasePoints: Int = 300,
+    val defaultPointsPerTai: Int = 100,
     val defaultMinimumTai: MahjongRule.MinimumTai = MahjongRule.MinimumTai.NONE,
     val defaultThinkingTime: MahjongRule.ThinkingTime = MahjongRule.ThinkingTime.NORMAL,
     val defaultFlowersEnabled: Boolean = true,
@@ -27,6 +27,7 @@ data class MahjongSettings(
     val openingDiceAnimationMs: Long = MahjongRule.DEFAULT_OPENING_DICE_ANIMATION_MS,
     val teleportPlayersOnStart: Boolean = true,
     val seatDistance: Double = 2.8,
+    val maxQueueDistance: Double = 8.0,
     val tableScale: Float = 1.8f,
     val handDistance: Double = BoardRenderer.DEFAULT_HAND_DISTANCE,
     val wallDistance: Double? = null,
@@ -89,9 +90,9 @@ data class MahjongSettings(
                 ).coerceIn(MahjongRule.MIN_BOT_RESPONSE_MS, MahjongRule.MAX_BOT_RESPONSE_MS),
                 defaultStartingPoints = config.getInt("defaults.starting-points", 0)
                     .coerceIn(0, MahjongRule.MAX_POINTS),
-                defaultBasePoints = config.getInt("defaults.base-points", 0)
+                defaultBasePoints = config.getInt("defaults.base-points", 300)
                     .coerceIn(0, MahjongRule.MAX_POINTS),
-                defaultPointsPerTai = config.getInt("defaults.points-per-tai", 1000)
+                defaultPointsPerTai = config.getInt("defaults.points-per-tai", 100)
                     .coerceIn(0, MahjongRule.MAX_POINTS),
                 defaultMinimumTai = configuredMinimumTai,
                 defaultThinkingTime = configuredThinkingTime,
@@ -114,6 +115,7 @@ data class MahjongSettings(
                 ).coerceIn(0L, MahjongRule.MAX_OPENING_DICE_ANIMATION_MS),
                 teleportPlayersOnStart = config.getBoolean("teleport.enabled", true),
                 seatDistance = config.getDouble("teleport.seat-distance", 2.8).coerceIn(2.0, 8.0),
+                maxQueueDistance = config.getDouble("teleport.max-queue-distance", 8.0).coerceAtLeast(0.0),
                 tableScale = config.getDouble("display.table-scale", 1.8).toFloat().coerceIn(1.0f, 3.0f),
                 handDistance = config.getDouble(
                     "display.hand-distance",

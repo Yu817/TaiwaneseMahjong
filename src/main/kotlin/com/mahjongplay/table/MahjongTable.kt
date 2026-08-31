@@ -1,21 +1,21 @@
 package com.mahjongplay.table
 
+import com.mahjongplay.MahjongPlayPlugin
 import com.mahjongplay.display.MahjongChairDisplay
 import com.mahjongplay.display.MahjongTableDisplay
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
-import com.mahjongplay.MahjongPlayPlugin
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.entity.Display
+import org.bukkit.entity.Entity
 import org.bukkit.entity.EntityType
 import org.bukkit.entity.Interaction
 import org.bukkit.entity.Player
 import org.bukkit.entity.TextDisplay
-import org.bukkit.entity.Entity
 import java.util.UUID
 import kotlin.math.hypot
 
@@ -50,16 +50,15 @@ class MahjongTable(
     val center: Location,
     var gameLengthText: String = "4圈",
     val playerCount: Int = 4,
-    var chairsEnabled: Boolean = true,
+    var chairsEnabled: Boolean = false,
     val tableScale: Float = MahjongTableDisplay.DEFAULT_SCALE,
+    var humanId: String? = null,
 ) {
 
     private val entityOwnershipTag = mahjongTableEntityTag(center)
     private val trackedEntityIds = mutableSetOf<UUID>()
 
     companion object {
-        // Chairs and their invisible support blocks are two blocks from the
-        // table center. Players must be teleported onto those supports.
         const val CHAIR_DISTANCE = 2.0
 
         fun obstructedPlacementBlocks(center: Location, chairsEnabled: Boolean): List<Location> {
@@ -268,6 +267,22 @@ class MahjongTable(
     }
 
     /**
+     * Stable ownership tag accessor for external lookup.
+     */
+    val ownershipTag: String get() = entityOwnershipTag
+    fun hasOwnershipTag(tag: String): Boolean = entityOwnershipTag == tag
+
+    /**
+     * Check if the location is within the 3x3 tabletop barrier area.
+     */
+    fun isTableTopBlock(location: Location): Boolean {
+        if (location.world != center.world) return false
+        if (location.blockY !in center.blockY..center.blockY + 1) return false
+        return kotlin.math.abs(location.blockX - center.blockX) <= 1 &&
+            kotlin.math.abs(location.blockZ - center.blockZ) <= 1
+    }
+
+    /**
      * Chairs are selected by their invisible barrier support block. This
      * keeps the click target tied to the exact block the player is looking at
      * instead of relying on an ItemDisplay or a large entity hitbox.
@@ -392,7 +407,7 @@ class MahjongTable(
 
     private fun spawnJoinDisplay() {
         val world = center.world
-        val displayLoc = Location(world, center.x, center.blockY + 2.5, center.z)
+        val displayLoc = Location(world, center.x, center.blockY + 2.65, center.z)
 
         val textDisplay = world.spawnEntity(displayLoc, EntityType.TEXT_DISPLAY) as TextDisplay
         rememberOwnedEntity(textDisplay)
@@ -405,12 +420,12 @@ class MahjongTable(
         textDisplay.alignment = TextDisplay.TextAlignment.CENTER
         joinTextDisplay = textDisplay
 
-        val interactionLoc = Location(world, center.x, center.blockY + 2.55, center.z)
+        val interactionLoc = Location(world, center.x, center.blockY + 2.50, center.z)
         val interaction = world.spawnEntity(interactionLoc, EntityType.INTERACTION) as Interaction
         rememberOwnedEntity(interaction)
         interaction.isPersistent = false
         interaction.interactionWidth = 2.0f
-        interaction.interactionHeight = 0.65f
+        interaction.interactionHeight = 0.60f
         interaction.isResponsive = true
         joinInteraction = interaction
 
@@ -422,76 +437,78 @@ class MahjongTable(
 
         // 垂直置中排列於牌桌正中心軸 (center.x, center.z)，配合 Billboard.CENTER
         // 讓 360 度所有方向的玩家看過去皆為即時面向自己、絕不重疊歪斜
-        val readyY = center.blockY + 2.10
+        val readyY = center.blockY + 2.05
         val readyLoc = Location(world, center.x, readyY, center.z)
         val readyTd = world.spawnEntity(readyLoc, EntityType.TEXT_DISPLAY) as TextDisplay
         rememberOwnedEntity(readyTd)
         readyTd.isPersistent = false
         readyTd.billboard = Display.Billboard.CENTER
-        readyTd.backgroundColor = Color.fromARGB(175, 0, 90, 0)
+        readyTd.backgroundColor = Color.fromARGB(190, 18, 62, 34)
         readyTd.brightness = Display.Brightness(15, 15)
         readyTd.isSeeThrough = false
         readyTd.setViewRange(0.6f)
         readyTd.alignment = TextDisplay.TextAlignment.CENTER
-        readyTd.text(Component.text(" ✓ 準備 ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
+        readyTd.text(Component.text("§a§l✔  準備  §r"))
         readyTextDisplay = readyTd
 
-        val readyIntLoc = Location(world, center.x, readyY - 0.15, center.z)
+        val readyIntLoc = Location(world, center.x, readyY - 0.20, center.z)
         val readyInt = world.spawnEntity(readyIntLoc, EntityType.INTERACTION) as Interaction
         rememberOwnedEntity(readyInt)
         readyInt.isPersistent = false
-        readyInt.interactionWidth = 1.2f
-        readyInt.interactionHeight = 0.35f
-        readyInt.isResponsive = false
+        readyInt.interactionWidth = 1.8f
+        readyInt.interactionHeight = 0.40f
+        readyInt.isResponsive = true
         readyInteraction = readyInt
 
-        val startY = center.blockY + 1.70
+        val startY = center.blockY + 1.60
         val startLoc = Location(world, center.x, startY, center.z)
         val startTd = world.spawnEntity(startLoc, EntityType.TEXT_DISPLAY) as TextDisplay
         rememberOwnedEntity(startTd)
         startTd.isPersistent = false
         startTd.billboard = Display.Billboard.CENTER
-        startTd.backgroundColor = Color.fromARGB(175, 140, 70, 0)
+        startTd.backgroundColor = Color.fromARGB(190, 95, 48, 10)
         startTd.brightness = Display.Brightness(15, 15)
         startTd.isSeeThrough = false
         startTd.setViewRange(0.6f)
         startTd.alignment = TextDisplay.TextAlignment.CENTER
-        startTd.text(Component.text(" ▶ 開始 ", NamedTextColor.GOLD).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
+        startTd.text(Component.text("§6§l▶  開始  §r"))
         startTextDisplay = startTd
 
-        val startIntLoc = Location(world, center.x, startY - 0.15, center.z)
+        val startIntLoc = Location(world, center.x, startY - 0.20, center.z)
         val startInt = world.spawnEntity(startIntLoc, EntityType.INTERACTION) as Interaction
         rememberOwnedEntity(startInt)
         startInt.isPersistent = false
-        startInt.interactionWidth = 1.2f
-        startInt.interactionHeight = 0.35f
-        startInt.isResponsive = false
+        startInt.interactionWidth = 1.8f
+        startInt.interactionHeight = 0.40f
+        startInt.isResponsive = true
         startInteraction = startInt
 
-        val settingsY = center.blockY + 1.30
+        val settingsY = center.blockY + 1.15
         val settingsLoc = Location(world, center.x, settingsY, center.z)
         val settingsTd = world.spawnEntity(settingsLoc, EntityType.TEXT_DISPLAY) as TextDisplay
         rememberOwnedEntity(settingsTd)
         settingsTd.isPersistent = false
         settingsTd.billboard = Display.Billboard.CENTER
-        settingsTd.backgroundColor = Color.fromARGB(175, 0, 75, 115)
+        settingsTd.backgroundColor = Color.fromARGB(190, 15, 55, 85)
         settingsTd.brightness = Display.Brightness(15, 15)
         settingsTd.isSeeThrough = false
         settingsTd.setViewRange(0.6f)
         settingsTd.alignment = TextDisplay.TextAlignment.CENTER
-        settingsTd.text(Component.text(" ⚙ 設定 ", NamedTextColor.AQUA).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
+        settingsTd.text(Component.text("§b§l⚙  設定  §r"))
         settingsTextDisplay = settingsTd
 
-        val settingsInt = world.spawnEntity(Location(world, center.x, settingsY - 0.15, center.z), EntityType.INTERACTION) as Interaction
+        val settingsIntLoc = Location(world, center.x, settingsY - 0.20, center.z)
+        val settingsInt = world.spawnEntity(settingsIntLoc, EntityType.INTERACTION) as Interaction
         rememberOwnedEntity(settingsInt)
         settingsInt.isPersistent = false
-        settingsInt.interactionWidth = 1.2f
-        settingsInt.interactionHeight = 0.35f
-        settingsInt.isResponsive = false
+        settingsInt.interactionWidth = 1.8f
+        settingsInt.interactionHeight = 0.40f
+        settingsInt.isResponsive = true
         settingsInteraction = settingsInt
     }
 
-    private var settingsTextDisplay: TextDisplay? = null
+    var settingsTextDisplay: TextDisplay? = null
+        private set
 
     private fun actionButtonLocation(y: Double, sideOffset: Double): Location {
         val axis = actionButtonAxis()
@@ -523,31 +540,29 @@ class MahjongTable(
     }
 
     private fun updateActionButtonPositions() {
-        val readyY = center.blockY + 2.10
+        val readyY = center.blockY + 2.05
         val readyLoc = Location(center.world, center.x, readyY, center.z)
         readyTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
             teleport(readyLoc)
         }
-        readyInteraction?.teleport(Location(center.world, center.x, readyY - 0.15, center.z))
+        readyInteraction?.teleport(Location(center.world, center.x, readyY - 0.20, center.z))
 
-        val startY = center.blockY + 1.70
+        val startY = center.blockY + 1.60
         val startLoc = Location(center.world, center.x, startY, center.z)
         startTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
             teleport(startLoc)
         }
-        startInteraction?.teleport(Location(center.world, center.x, startY - 0.15, center.z))
+        startInteraction?.teleport(Location(center.world, center.x, startY - 0.20, center.z))
 
-        val settingsY = center.blockY + 1.30
+        val settingsY = center.blockY + 1.15
         val settingsLoc = Location(center.world, center.x, settingsY, center.z)
         settingsTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
             teleport(settingsLoc)
         }
-        settingsInteraction?.teleport(Location(center.world, center.x, settingsY - 0.15, center.z))
-
-        updateSettingsMenuPositions()
+        settingsInteraction?.teleport(Location(center.world, center.x, settingsY - 0.20, center.z))
     }
 
     private fun removeActionButtonsOnly() {
@@ -637,12 +652,11 @@ class MahjongTable(
             interaction.isPersistent = false
             interaction.interactionWidth = when (option.action) {
                 "flowers_toggle" -> 1.30f
-                "chairs_toggle" -> 1.20f
                 "close" -> 0.90f
                 else -> 1.00f
             }
             interaction.interactionHeight = SETTINGS_OPTION_INTERACTION_HEIGHT
-            interaction.isResponsive = false
+            interaction.isResponsive = true
             settingsOptionInteractionList += interaction
             settingsOptionActions[interaction.uniqueId] = option.action
         }
@@ -688,12 +702,12 @@ class MahjongTable(
         return Location(
             center.world,
             center.x + axis[0] * offset,
-            rowY,
+        rowY,
             center.z + axis[1] * offset,
         )
     }
 
-    private fun mainDisplayBackground(): Color = Color.fromARGB(180, 0, 0, 0)
+    private fun mainDisplayBackground(): Color = Color.fromARGB(185, 12, 18, 26)
 
     private fun updateMainDisplay(text: Component) {
         mainDisplayText = text
@@ -727,6 +741,14 @@ class MahjongTable(
     private fun hiddenJoinInteractionLocation(): Location =
         Location(center.world, center.x, center.blockY + 20.0, center.z)
 
+    private fun tableTitleComponent(): Component {
+        val digits = humanId?.filter { it.isDigit() }
+        val titleText = if (!digits.isNullOrBlank()) "${digits}號桌" else (humanId?.ifBlank { "麻將桌" } ?: "麻將桌")
+        return Component.text("§8§m   §r §6✦ §e§l$titleText§r §6✦ §8§m   §r")
+    }
+
+    var ruleInfoText: String = ""
+
     fun updateJoinDisplay(
         playerCount: Int,
         maxPlayers: Int,
@@ -738,39 +760,46 @@ class MahjongTable(
         val textDisplay = joinTextDisplay ?: return
         if (waiting) {
             if (playerCount > 0) showActionButtons() else hideActionButtons()
-            var text = Component.text("🀄 麻將 ", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
-                .append(Component.text("[$gameLengthText]", NamedTextColor.AQUA).decoration(TextDecoration.BOLD, false))
+            var text = tableTitleComponent()
+            if (ruleInfoText.isNotBlank()) {
+                text = text.append(Component.newline()).append(Component.text(ruleInfoText))
+            }
+            text = text.append(Component.newline())
+                .append(Component.text("§8[ §a§l右鍵點擊牌桌 §f加入／離開 §8]"))
                 .append(Component.newline())
-                .append(Component.text("右鍵點擊加入／離開", NamedTextColor.GREEN).decoration(TextDecoration.BOLD, false))
-                .append(Component.newline())
-                .append(Component.text("$playerCount/$maxPlayers 位玩家", NamedTextColor.YELLOW).decoration(TextDecoration.BOLD, false))
+                .append(Component.text("§7雀友席位 §8(§e$playerCount§8/§6$maxPlayers§8)"))
 
             playerInfo.forEach { (name, ready) ->
-                val readyMark = if (ready) " ✓" else " ✗"
-                val color = if (ready) NamedTextColor.GREEN else NamedTextColor.GRAY
+                val readyIcon = if (ready) "§a✔ 已準備" else "§c✗ 未準備"
+                val prefix = if (name.startsWith("♛")) "§6👑 " else "§f👤 "
+                val cleanName = if (name.startsWith("♛")) name.substringAfter("♛").trim() else name
                 text = text.append(Component.newline())
-                    .append(Component.text("$name$readyMark", color).decoration(TextDecoration.BOLD, false))
+                    .append(Component.text("$prefix§e$cleanName §8· $readyIcon"))
             }
             updateMainDisplay(text)
         } else {
-            updateMainDisplay(
-                Component.text("🀄 麻將 ", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
-                    .append(Component.text("[$gameLengthText]", NamedTextColor.AQUA).decoration(TextDecoration.BOLD, false))
-                    .append(Component.newline())
-                    .append(Component.text("遊戲進行中", NamedTextColor.RED).decoration(TextDecoration.BOLD, false))
-            )
+            var text = tableTitleComponent()
+            if (ruleInfoText.isNotBlank()) {
+                text = text.append(Component.newline()).append(Component.text(ruleInfoText))
+            }
+            text = text.append(Component.newline())
+                .append(Component.text("§c⚔ §4§l熱戰進行中 §c⚔"))
+            updateMainDisplay(text)
         }
         syncFloatingTextVisibility()
     }
 
     fun showCountdown(seconds: Int) {
         if (joinTextDisplay == null) return
-        updateMainDisplay(
-            Component.text("🀄 麻將 ", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
-                .append(Component.text("[$gameLengthText]", NamedTextColor.AQUA).decoration(TextDecoration.BOLD, false))
-                .append(Component.newline())
-                .append(Component.text("${seconds} 秒後開始……", NamedTextColor.YELLOW).decoration(TextDecoration.BOLD, false))
-        )
+        var text = tableTitleComponent()
+        if (ruleInfoText.isNotBlank()) {
+            text = text.append(Component.newline()).append(Component.text(ruleInfoText))
+        }
+        text = text.append(Component.newline())
+            .append(Component.text("§e⏳ §6§l對局即將開始 §e⏳"))
+            .append(Component.newline())
+            .append(Component.text("§f即將在 §e§l$seconds §f秒後發牌！"))
+        updateMainDisplay(text)
     }
 
     /**

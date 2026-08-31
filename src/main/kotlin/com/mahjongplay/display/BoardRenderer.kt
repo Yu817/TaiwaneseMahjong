@@ -71,6 +71,8 @@ class BoardRenderer(
     val handOwnerDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val discardDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val fuuroDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
+    val ankanOwnerDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
+    val ankanHiddenDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val flowerDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val seatScoreDisplays = mutableListOf<TextDisplay>()
     private var floatingCenterDisplay: MahjongTileDisplay? = null
@@ -809,6 +811,14 @@ class BoardRenderer(
         val oldDisplays = existing.toList()
         existing.clear()
 
+        val ownerAnkanExisting = ankanOwnerDisplays.getOrPut(player.uuid) { mutableListOf() }
+        val oldOwnerAnkan = ownerAnkanExisting.toList()
+        ownerAnkanExisting.clear()
+
+        val hiddenAnkanExisting = ankanHiddenDisplays.getOrPut(player.uuid) { mutableListOf() }
+        val oldHiddenAnkan = hiddenAnkanExisting.toList()
+        hiddenAnkanExisting.clear()
+
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
         val halfTable = furoCornerEdge
@@ -829,6 +839,16 @@ class BoardRenderer(
 
             if (isAnkan) {
                 val tiles = fuuro.tiles
+                val ownerBukkit = Bukkit.getPlayer(UUID.fromString(player.uuid))
+                val otherBukkitPlayers = game.players
+                    .filter { it.uuid != player.uuid }
+                    .mapNotNull { Bukkit.getPlayer(UUID.fromString(it.uuid)) }
+                val spectators = if (game.rule.spectate) {
+                    Bukkit.getOnlinePlayers().filter { op ->
+                        game.players.none { it.uuid == op.uniqueId.toString() }
+                    }
+                } else emptyList()
+
                 tiles.forEach { tile ->
                     val stepSize = if (tileCount == 0) WIDTH / 2.0 + tileGap / 2.0
                         else if (lastWasClaimTile) (HEIGHT + WIDTH) / 2.0 + tileGap
@@ -838,11 +858,24 @@ class BoardRenderer(
                     curZ += perp[1] * stepSize
 
                     val loc = Location(world, curX, flatTileY, curZ)
-                    // 台麻暗槓是公開宣告的牌組；四張正面朝上，避免牌背素材被誤認成未知散牌。
-                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
-                    display.spawn()
-                    showToAllViewers(display)
-                    existing += display
+
+                    // 暗槓對他人與普通旁觀者顯示扣牌（FACE_DOWN, UNKNOWN）
+                    val hiddenDisplay = MahjongTileDisplay(loc, MahjongTile.UNKNOWN, TileFace.FACE_DOWN, yaw, ownershipTag = entityOwnershipTag)
+                    hiddenDisplay.spawn()
+                    otherBukkitPlayers.forEach { hiddenDisplay.showTo(it) }
+                    if (!game.rule.spectatorSeeHands) {
+                        spectators.forEach { hiddenDisplay.showTo(it) }
+                    }
+                    hiddenAnkanExisting += hiddenDisplay
+
+                    // 暗槓對本人顯示自己暗槓的牌面（FACE_UP，正面可見）
+                    val ownerDisplay = MahjongTileDisplay(loc.clone(), tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
+                    ownerDisplay.spawn()
+                    ownerBukkit?.let { ownerDisplay.showTo(it) }
+                    if (game.rule.spectatorSeeHands) {
+                        spectators.forEach { ownerDisplay.showTo(it) }
+                    }
+                    ownerAnkanExisting += ownerDisplay
 
                     lastWasClaimTile = false
                     tileCount++
@@ -915,6 +948,8 @@ class BoardRenderer(
         }
 
         oldDisplays.forEach { it.remove() }
+        oldOwnerAnkan.forEach { it.remove() }
+        oldHiddenAnkan.forEach { it.remove() }
     }
 
     fun renderFlowers(player: MahjongPlayerBase) {
@@ -1018,7 +1053,7 @@ class BoardRenderer(
                         BotDifficulty.HIGH -> NamedTextColor.LIGHT_PURPLE
                     }
                     Component.text("【${seatWind.displayName}家】", NamedTextColor.AQUA)
-                        .append(Component.text("🤖 ${player.rawDisplayName} [託管]", NamedTextColor.GOLD))
+                        .append(Component.text("🤖 ${player.rawDisplayName} [代打]", NamedTextColor.GOLD))
                         .append(Component.text(" [${player.botDifficulty.displayName}]", diffColor))
                 }
                 else -> {
@@ -1079,12 +1114,18 @@ class BoardRenderer(
         val isSpectator = !isParticipant && game.rule.spectate
         game.seat.forEach { seatPlayer ->
             val isOwner = seatPlayer.uuid == viewerUUID
+            val canSeeFront = isOwner || (isSpectator && game.rule.spectatorSeeHands)
             handDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
                 if (isOwner) display.hideTo(viewer) else display.showTo(viewer)
             }
             handOwnerDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
-                val canSeeFront = isOwner || (isSpectator && game.rule.spectatorSeeHands)
                 if (canSeeFront) display.showTo(viewer) else display.hideTo(viewer)
+            }
+            ankanOwnerDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
+                if (canSeeFront) display.showTo(viewer) else display.hideTo(viewer)
+            }
+            ankanHiddenDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
+                if (!canSeeFront) display.showTo(viewer) else display.hideTo(viewer)
             }
         }
 
@@ -1166,6 +1207,29 @@ class BoardRenderer(
                 spectators.forEach { display.hideTo(it) }
             }
         }
+
+        val ankanOwners = ankanOwnerDisplays[player.uuid].orEmpty()
+        val ankanHiddens = ankanHiddenDisplays[player.uuid].orEmpty()
+
+        ankanHiddens.forEach { display ->
+            ownerBukkit?.let { display.hideTo(it) }
+            otherBukkitPlayers.forEach { display.showTo(it) }
+            if (game.rule.spectatorSeeHands) {
+                spectators.forEach { display.hideTo(it) }
+            } else {
+                spectators.forEach { display.showTo(it) }
+            }
+        }
+
+        ankanOwners.forEach { display ->
+            ownerBukkit?.let { display.showTo(it) }
+            otherBukkitPlayers.forEach { display.hideTo(it) }
+            if (game.rule.spectatorSeeHands) {
+                spectators.forEach { display.showTo(it) }
+            } else {
+                spectators.forEach { display.showTo(it) }
+            }
+        }
     }
 
     fun renderRevealedHands(player: MahjongPlayerBase) {
@@ -1224,6 +1288,10 @@ class BoardRenderer(
         discardDisplays.clear()
         fuuroDisplays.values.flatten().forEach { it.remove() }
         fuuroDisplays.clear()
+        ankanOwnerDisplays.values.flatten().forEach { it.remove() }
+        ankanOwnerDisplays.clear()
+        ankanHiddenDisplays.values.flatten().forEach { it.remove() }
+        ankanHiddenDisplays.clear()
         flowerDisplays.values.flatten().forEach { it.remove() }
         flowerDisplays.clear()
         actionDisplays.values.flatten().forEach { ad ->
@@ -1402,6 +1470,7 @@ class BoardRenderer(
         matched += discardDisplays.values.flatten().filter { it.tile == tile }
         handOwnerDisplays[playerUUID]?.filter { it.tile == tile }?.let { matched += it }
         matched += fuuroDisplays.values.flatten().filter { it.tile == tile }
+        ankanOwnerDisplays[playerUUID]?.filter { it.tile == tile }?.let { matched += it }
 
         val player = Bukkit.getPlayer(UUID.fromString(playerUUID)) ?: return
         matched.forEach { display ->

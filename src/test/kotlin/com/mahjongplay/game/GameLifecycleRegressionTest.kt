@@ -54,6 +54,29 @@ class GameLifecycleRegressionTest {
         assertEquals(true, terminationChecked)
     }
 
+    @Test
+    fun `end and cancelGame purge bots and retain real players`() {
+        val game = MahjongGame().apply {
+            join("human-1", "Alice")
+            join("human-2", "Bob")
+            addBot("Bot-1")
+            addBot("Bot-2")
+        }
+
+        assertEquals(4, game.players.size)
+        assertEquals(2, game.realPlayers.size)
+
+        game.end()
+        assertEquals(2, game.players.size)
+        assertEquals(listOf("human-1", "human-2"), game.players.map { it.uuid })
+
+        game.addBot("Bot-3")
+        assertEquals(3, game.players.size)
+        game.cancelGame()
+        assertEquals(2, game.players.size)
+        assertEquals(listOf("human-1", "human-2"), game.players.map { it.uuid })
+    }
+
     private fun readyGame() = MahjongGame().apply {
         repeat(4) { addBot("Bot-$it") }
     }

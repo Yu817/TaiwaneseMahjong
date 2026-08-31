@@ -106,7 +106,7 @@ class TileDrawEventTest {
         assertEquals(65, events.size)
         assertEquals(DrawReason.INITIAL_DEAL, events.first().reason)
         assertEquals(List(4) { game.seat[0].uuid }, events.take(4).map { it.playerUUID })
-        assertEquals(List(4) { game.seat[3].uuid }, events.drop(4).take(4).map { it.playerUUID })
+        assertEquals(List(4) { game.seat[1].uuid }, events.drop(4).take(4).map { it.playerUUID })
         assertEquals(game.seat[0].uuid, events.last().playerUUID)
         assertEquals(MahjongTile.M2, game.seat[0].hands.last())
     }

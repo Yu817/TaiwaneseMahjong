@@ -86,6 +86,7 @@ class MahjongPlayPlugin : JavaPlugin(), Listener {
         interactionListener = EntityInteractionListener(tableManager)
         server.pluginManager.registerEvents(interactionListener, this)
         server.pluginManager.registerEvents(com.mahjongplay.table.MahjongSettingsGUIListener(tableManager), this)
+        server.pluginManager.registerEvents(com.mahjongplay.table.MahjongAdminGUI.Listener(tableManager), this)
         server.pluginManager.registerEvents(this, this)
 
         server.scheduler.runTaskLater(this, Runnable {

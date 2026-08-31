@@ -93,7 +93,7 @@ class MahjongGame(
 
     private val seatOrderFromDealer: List<MahjongPlayerBase>
         get() = List(playerCount) {
-            seat[(playerCount - ((round.round + it) % playerCount)) % playerCount]
+            seat[(round.round + it) % playerCount]
         }
 
     private fun seatWindOf(player: MahjongPlayerBase): Wind {
@@ -183,6 +183,11 @@ class MahjongGame(
                 performSeatWindDraw()
             } else {
                 seat.shuffle()
+                val completeEvent = SeatWindDrawCompleteEvent(
+                    assignments = emptyMap(),
+                    newSeatOrder = seat.toList()
+                )
+                listener?.onSeatWindDrawCompleted(completeEvent)
             }
             delay(500)
             startRound()
@@ -197,6 +202,8 @@ class MahjongGame(
         val scoreList = players.map {
             ScoreItem(it.displayName, it.uuid, it.isRealPlayer, scoreOrigin = it.points, scoreChange = 0)
         }
+        // 對局結束後移除所有填補席位的 Bot，避免列隊等待時顯示 Bot
+        players.removeAll { !it.isRealPlayer }
         // 對局結束後重設所有玩家準備狀態，禁止自動準備
         players.forEach { it.ready = false }
         listener?.onGameEnd(this, scoreList)
@@ -210,6 +217,7 @@ class MahjongGame(
         currentPlayer = null
         players.filterIsInstance<MahjongPlayer>().forEach { it.cancelPendingActions() }
         gameJob?.cancel()
+        players.removeAll { !it.isRealPlayer }
         players.forEach { it.ready = false }
         seat.clear()
         clearRoundState()
@@ -452,21 +460,21 @@ class MahjongGame(
         val self = seat.indexOf(this)
         val targetIndex = seat.indexOf(target)
         return when ((targetIndex - self + playerCount) % playerCount) {
-            playerCount - 1 -> ClaimTarget.RIGHT
-            1 -> ClaimTarget.LEFT
+            playerCount - 1 -> ClaimTarget.LEFT
+            1 -> ClaimTarget.RIGHT
             else -> ClaimTarget.ACROSS
         }
     }
 
     private fun claimTargetBySeatDiff(claimerSeat: Int, discarderSeat: Int): ClaimTarget =
         when ((discarderSeat - claimerSeat + playerCount) % playerCount) {
-            playerCount - 1 -> ClaimTarget.RIGHT
-            1 -> ClaimTarget.LEFT
+            playerCount - 1 -> ClaimTarget.LEFT
+            1 -> ClaimTarget.RIGHT
             else -> ClaimTarget.ACROSS
         }
 
     private fun nextSeatIndex(seatIndex: Int): Int =
-        (seatIndex - 1 + playerCount) % playerCount
+        (seatIndex + 1) % playerCount
 
     private suspend fun performSeatWindDraw() {
         if (!isPlaying) return
@@ -705,7 +713,7 @@ class MahjongGame(
             // 明槓可對任何一家打出的第四張進行；若玩家選碰，同輪直接完成碰。
             val claimants = players
                 .filter { it != player && (it.canPon(actualDiscard) || it.canMinkan(actualDiscard)) }
-                .sortedBy { (discarderSeat - seat.indexOf(it) + playerCount) % playerCount }
+                .sortedBy { (seat.indexOf(it) - discarderSeat + playerCount) % playerCount }
 
             for (claimant in claimants) {
                 val canMinkan = supplementWall.isNotEmpty() && claimant.canMinkan(actualDiscard)

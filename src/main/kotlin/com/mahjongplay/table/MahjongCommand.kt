@@ -219,20 +219,14 @@ class MahjongCommand(
             sender.msg("目前伺服器內沒有任何運作中的麻將桌。", NamedTextColor.YELLOW)
             return
         }
-        sender.sendMessage(MahjongChatFormat.DIVIDER)
-        sender.sendMessage(Component.text("  🀄 運作中的麻將桌列表：", NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
+        sender.sendMessage(Component.text("§8§m━━━━━━━━━━§r §6🀄 §e§l全 服 牌 桌 清 單 §6🀄 §8§m━━━━━━━━━━"))
         sessions.forEach { s ->
-            val count = s.game.players.size
+            val count = if (s.game.status == GameStatus.WAITING) s.game.realPlayers.size else s.game.players.size
             val max = s.game.rule.playerCount
-            val statusText = if (s.game.status == GameStatus.PLAYING) "對局中" else "等待中"
-            val statusColor = if (s.game.status == GameStatus.PLAYING) NamedTextColor.RED else NamedTextColor.GREEN
-            val modeText = if (s.game.rule.moneyMatch && !s.game.rule.botsEnabled) "💰金幣局" else "🎮娛樂局"
+            val statusBadge = if (s.game.status == GameStatus.PLAYING) "§c[對局中]" else "§a[等待中]"
+            val modeBadge = if (s.game.rule.moneyMatch && !s.game.rule.botsEnabled) "§e💰 金幣局" else "§b🎮 娛樂局"
             sender.sendMessage(
-                Component.text("  • ", NamedTextColor.GRAY)
-                    .append(Component.text(s.humanId, NamedTextColor.AQUA).decorate(TextDecoration.BOLD))
-                    .append(Component.text(" | 玩家: $count/$max | ", NamedTextColor.GRAY))
-                    .append(Component.text("[$statusText]", statusColor))
-                    .append(Component.text(" | $modeText", NamedTextColor.YELLOW))
+                Component.text("  §7• §b§l#${s.humanId} §8︳§7人數: §e$count§7/$max §8︳$statusBadge §8︳$modeBadge")
             )
         }
         sender.sendMessage(MahjongChatFormat.DIVIDER)
@@ -259,6 +253,14 @@ class MahjongCommand(
         }
 
         if (args.size < 2) {
+            if (sender is Player) {
+                val session = manager.getSessionForPlayer(sender.uniqueId.toString())
+                    ?: manager.getAllSessions().minByOrNull { it.center.distanceSquared(sender.location) }
+                if (session != null) {
+                    MahjongAdminGUI.open(sender, session, manager)
+                    return
+                }
+            }
             sendAdminHelp(sender)
             return
         }
@@ -266,13 +268,42 @@ class MahjongCommand(
         val adminSub = args[1].lowercase()
         val subArgs = args.drop(2).toTypedArray()
         when (adminSub) {
+            "gui", "menu", "control" -> {
+                if (sender !is Player) {
+                    sender.msgConsoleOnly()
+                    return
+                }
+                val query = subArgs.firstOrNull()
+                val session = if (query != null) {
+                    manager.getSessionByHumanId(query)
+                        ?: manager.getAllSessions().find { it.tableId.toString().startsWith(query) }
+                } else {
+                    manager.getSessionForPlayer(sender.uniqueId.toString())
+                        ?: manager.getAllSessions().minByOrNull { it.center.distanceSquared(sender.location) }
+                }
+                if (session == null) {
+                    sender.msg("找不到指定的麻將桌。", NamedTextColor.RED)
+                    return
+                }
+                MahjongAdminGUI.open(sender, session, manager)
+            }
             "stop", "cancel" -> handleCancel(sender, subArgs)
             "destroy" -> handleDestroy(sender, subArgs)
             "kick" -> handleKick(sender, subArgs)
             "reload" -> handleReload(sender)
+            "resetall", "resetalltables" -> handleResetAllTables(sender)
             "resetstats" -> handleResetStats(sender, subArgs)
             else -> sendAdminHelp(sender)
         }
+    }
+
+    private fun handleResetAllTables(sender: CommandSender) {
+        if (!sender.hasPermission(PERM_ADMIN)) {
+            sender.msg("你沒有權限執行此指令。", NamedTextColor.RED)
+            return
+        }
+        manager.resetAllTablesToDefaults()
+        sender.msg("已將全伺服器所有麻將桌（共 ${manager.getAllSessions().size} 張）全面重設為系統預設設定！", NamedTextColor.GREEN)
     }
 
     private fun handleCancel(sender: CommandSender, args: Array<out String>) {
@@ -402,37 +433,38 @@ class MahjongCommand(
     // ==========================================
 
     private fun sendHelp(sender: CommandSender) {
-        sender.sendMessage(MahjongChatFormat.DIVIDER)
-        sender.sendMessage(Component.text("  🀄【台灣麻將】 指令導覽說明", NamedTextColor.GOLD).decorate(TextDecoration.BOLD))
-        sender.sendMessage(Component.text("  💡 玩家常用指令：", NamedTextColor.YELLOW).decorate(TextDecoration.BOLD))
-        sender.sendMessage(Component.text("  • /mahjong table", NamedTextColor.AQUA).append(Component.text(" - 於面前生成麻將桌", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong join [桌號]", NamedTextColor.AQUA).append(Component.text(" - 加入牌桌（或直接右鍵牌桌）", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong leave", NamedTextColor.AQUA).append(Component.text(" - 離開目前牌桌", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong settings", NamedTextColor.AQUA).append(Component.text(" - 開啟規則設定選單 GUI", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong stats [玩家]", NamedTextColor.AQUA).append(Component.text(" - 查看麻將歷史戰績與段位", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong auto", NamedTextColor.AQUA).append(Component.text(" - 開啟／取消 🤖 託管代打（或按 F 鍵）", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong list", NamedTextColor.AQUA).append(Component.text(" - 查看所有運作中的麻將桌", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("§8§m━━━━━━━━━━§r §6🀄 §e§l台 灣 麻 將 指 令 導 覽 §6🀄 §8§m━━━━━━━━━━"))
+        sender.sendMessage(Component.text("  💡 §e§l玩家常用指令："))
+        sender.sendMessage(Component.text("  §b• /mahjong table         §7➜ 於面前生成麻將桌"))
+        sender.sendMessage(Component.text("  §b• /mahjong join [桌號]   §7➜ 加入指定牌桌（或右鍵牌桌入座）"))
+        sender.sendMessage(Component.text("  §b• /mahjong leave         §7➜ 離開目前所在牌桌"))
+        sender.sendMessage(Component.text("  §b• /mahjong settings      §7➜ 開啟牌桌規則設定 GUI"))
+        sender.sendMessage(Component.text("  §b• /mahjong stats [玩家]  §7➜ 查看歷史戰績與牌力段位"))
+        sender.sendMessage(Component.text("  §b• /mahjong auto          §7➜ 開啟／取消 §e🤖 代打模式§7（或按 F 鍵）"))
+        sender.sendMessage(Component.text("  §b• /mahjong list          §7➜ 查看全服運作中的牌桌清單"))
 
         if (sender.hasPermission(PERM_ADMIN)) {
             sender.sendMessage(Component.text(" "))
-            sender.sendMessage(Component.text("  🛠 管理員專用指令：", NamedTextColor.RED).decorate(TextDecoration.BOLD))
-            sender.sendMessage(Component.text("  • /mahjong admin stop [桌號/玩家]", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制終止並重置牌局", NamedTextColor.GRAY)))
-            sender.sendMessage(Component.text("  • /mahjong admin destroy [桌號/all]", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制銷毀牌桌實體", NamedTextColor.GRAY)))
-            sender.sendMessage(Component.text("  • /mahjong admin kick <玩家>", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 強制踢出牌桌玩家", NamedTextColor.GRAY)))
-            sender.sendMessage(Component.text("  • /mahjong admin reload", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 重新載入 config.yml", NamedTextColor.GRAY)))
-            sender.sendMessage(Component.text("  • /mahjong admin resetstats <玩家>", NamedTextColor.LIGHT_PURPLE).append(Component.text(" - 重置玩家戰績數據", NamedTextColor.GRAY)))
+            sender.sendMessage(Component.text("  🛠 §c§l管理員專用指令："))
+            sender.sendMessage(Component.text("  §d• /mahjong admin stop [桌號]     §7➜ 強制終止並重置牌局"))
+            sender.sendMessage(Component.text("  §d• /mahjong admin destroy [桌號]  §7➜ 強制銷毀牌桌實體"))
+            sender.sendMessage(Component.text("  §d• /mahjong admin kick <玩家>     §7➜ 強制踢出牌桌玩家"))
+            sender.sendMessage(Component.text("  §d• /mahjong admin reload          §7➜ 重新載入 config.yml"))
+            sender.sendMessage(Component.text("  §d• /mahjong admin resetall        §7➜ 將全服所有牌桌恢復預設設定"))
+            sender.sendMessage(Component.text("  §d• /mahjong admin resetstats <玩家>§7➜ 重置玩家戰績數據"))
         }
         sender.sendMessage(MahjongChatFormat.DIVIDER)
     }
 
     private fun sendAdminHelp(sender: CommandSender) {
-        sender.sendMessage(MahjongChatFormat.DIVIDER)
-        sender.sendMessage(Component.text("  🛠【台灣麻將】 管理員指令列表", NamedTextColor.RED).decorate(TextDecoration.BOLD))
-        sender.sendMessage(Component.text("  • /mahjong admin stop [桌號/玩家]", NamedTextColor.YELLOW).append(Component.text(" - 強制終止進行中的牌局", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong admin destroy [桌號/all]", NamedTextColor.YELLOW).append(Component.text(" - 銷毀牌桌", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong admin kick <玩家>", NamedTextColor.YELLOW).append(Component.text(" - 踢出玩家", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong admin reload", NamedTextColor.YELLOW).append(Component.text(" - 重新載入設定檔", NamedTextColor.GRAY)))
-        sender.sendMessage(Component.text("  • /mahjong admin resetstats <玩家>", NamedTextColor.YELLOW).append(Component.text(" - 重置玩家戰績", NamedTextColor.GRAY)))
+        sender.sendMessage(Component.text("§8§m━━━━━━━━━━§r §c🛠 §e§l管 理 員 專 用 指 令 §c🛠 §8§m━━━━━━━━━━"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin gui [桌號]       §7➜ 開啟牌桌管理員控制台 GUI"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin stop [桌號/玩家] §7➜ 強制終止進行中的牌局"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin destroy [桌號]   §7➜ 銷毀牌桌實體"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin kick <玩家>      §7➜ 踢出牌桌玩家"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin reload           §7➜ 重新載入設定檔"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin resetall         §7➜ 將全服所有牌桌恢復預設設定"))
+        sender.sendMessage(Component.text("  §d• /mahjong admin resetstats <玩家> §7➜ 重置玩家戰績數據"))
         sender.sendMessage(MahjongChatFormat.DIVIDER)
     }
 
@@ -453,7 +485,7 @@ class MahjongCommand(
         if (args.size == 2) {
             val first = args[0].lowercase()
             if (first == "admin" && isAdmin) {
-                return listOf("stop", "destroy", "kick", "reload", "resetstats")
+                return listOf("gui", "stop", "destroy", "kick", "reload", "resetall", "resetstats")
                     .filter { it.startsWith(args[1].lowercase()) }
             }
             if (first == "stats" || first == "status" || first == "profile") {
@@ -480,10 +512,17 @@ class MahjongCommand(
     }
 
     private fun CommandSender.msg(text: String, color: NamedTextColor) {
-        sendMessage(MahjongChatFormat.PREFIX.append(Component.text(text, color)))
+        val prefix = when (color) {
+            NamedTextColor.GREEN -> MahjongChatFormat.SUCCESS_PREFIX
+            NamedTextColor.RED -> MahjongChatFormat.ERROR_PREFIX
+            NamedTextColor.YELLOW -> MahjongChatFormat.WARN_PREFIX
+            NamedTextColor.GOLD -> MahjongChatFormat.ECO_PREFIX
+            else -> MahjongChatFormat.PREFIX
+        }
+        sendMessage(prefix.append(Component.text(text, color)))
     }
 
     private fun CommandSender.msgConsoleOnly() {
-        sendMessage("此指令僅限遊戲內玩家使用。")
+        sendMessage(MahjongChatFormat.ERROR_PREFIX.append(Component.text("此指令僅限遊戲內玩家使用。", NamedTextColor.RED)))
     }
 }

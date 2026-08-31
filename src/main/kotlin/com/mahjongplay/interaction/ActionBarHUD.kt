@@ -82,7 +82,7 @@ object ActionBarHUD {
     fun seatWindOf(game: MahjongGame, player: MahjongPlayerBase): Wind {
         val index = game.seat.indexOf(player)
         if (index < 0) return Wind.EAST
-        val seatOrderIndex = (4 - ((game.round.round + index) % 4)) % 4
+        val seatOrderIndex = (index - (game.round.round % 4) + 4) % 4
         return Wind.entries[seatOrderIndex]
     }
 

@@ -11,8 +11,8 @@ defaults:
   starting-points: 0
 
   # 台灣底台制：每筆支付 = 底 + 台數 * 每台籌碼。
-  base-points: 0
-  points-per-tai: 1000
+  base-points: 300
+  points-per-tai: 100
   minimum-tai: NONE
   thinking-time: NORMAL
   flowers: true
@@ -21,6 +21,8 @@ teleport:
   enabled: true
   # 玩家傳送到牌桌四側座位的距離（方塊）。
   seat-distance: 2.0
+  # 玩家在列隊等待時，若離開牌桌超過此距離（方塊），自動移出列隊（0 = 停用）。
+  max-queue-distance: 8.0
 
 economy:
   # 只有真人座位彼此付款時才使用 Vault；Bot 相關付款仍只算牌局積分。

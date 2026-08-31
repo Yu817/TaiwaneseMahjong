@@ -61,7 +61,7 @@ class BotTakeoverTest {
         player.activateBotTakeover(BotDifficulty.HIGH)
         assertTrue(player.isBotTakeover)
         assertFalse(player.isRealPlayer)
-        assertEquals("🤖 [託管] Alice", player.displayName)
+        assertEquals("🤖 [代打] Alice", player.displayName)
         assertEquals(BotDifficulty.HIGH, player.botDifficulty)
 
         player.deactivateBotTakeover()

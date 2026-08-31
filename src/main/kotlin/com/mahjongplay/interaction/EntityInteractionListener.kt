@@ -21,7 +21,9 @@ import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.player.PlayerAnimationEvent
 import org.bukkit.event.player.PlayerAnimationType
+import org.bukkit.event.player.PlayerChangedWorldEvent
 import org.bukkit.event.player.PlayerMoveEvent
+import org.bukkit.event.player.PlayerTeleportEvent
 import org.bukkit.inventory.EquipmentSlot
 import java.util.UUID
 
@@ -35,20 +37,75 @@ class EntityInteractionListener(
      * action single-shot while still cancelling all duplicate events.
      */
     private val recentLeftDiscardInputAt = mutableMapOf<UUID, Long>()
+    private val recentRightJoinLeaveInputAt = mutableMapOf<UUID, Long>()
 
     fun clearRecentInput(playerUUID: UUID) {
         recentLeftDiscardInputAt.remove(playerUUID)
+        recentRightJoinLeaveInputAt.remove(playerUUID)
     }
 
     @EventHandler(ignoreCancelled = true)
     fun onPlayerMove(event: PlayerMoveEvent) {
         val to = event.to ?: return
+        val player = event.player
+        checkPlayerDistance(player, "離開牌桌過遠")
+
         if (event.from.yaw == to.yaw && event.from.pitch == to.pitch) return
 
-        val playerUUID = event.player.uniqueId.toString()
-        val game = gameManager.getGameForPlayer(playerUUID) ?: return
+        val playerUUID = player.uniqueId.toString()
+        val session = gameManager.getSessionForPlayer(playerUUID)
+        val game = session?.game ?: return
         val renderer = gameManager.getRenderer(game) ?: return
-        renderer.refreshDiscardHover(event.player)
+        renderer.refreshDiscardHover(player)
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    fun onPlayerTeleport(event: PlayerTeleportEvent) {
+        checkPlayerDistance(event.player, "被傳送離開牌桌")
+    }
+
+    @EventHandler
+    fun onPlayerChangedWorld(event: PlayerChangedWorldEvent) {
+        checkPlayerDistance(event.player, "切換世界離開牌桌")
+    }
+
+    private fun checkPlayerDistance(player: Player, reason: String = "離開牌桌過遠") {
+        val playerUUID = player.uniqueId.toString()
+        val session = gameManager.getSessionForPlayer(playerUUID) ?: return
+        val maxDist = gameManager.settings.maxQueueDistance
+        if (maxDist <= 0.0) return
+
+        val playerLoc = player.location
+        val outOfRange = playerLoc.world != session.center.world ||
+            playerLoc.distanceSquared(session.center) > maxDist * maxDist
+
+        if (session.game.status == GameStatus.WAITING) {
+            if (outOfRange) {
+                gameManager.leaveTable(playerUUID)
+                runCatching { UUID.fromString(playerUUID) }.getOrNull()?.let { gameManager.releasePlayerFromChairs(it) }
+                player.sendMessage(
+                    Component.text("[麻將] ", NamedTextColor.GOLD)
+                        .append(Component.text("你已離開牌桌過遠（超過 ${maxDist.toInt()} 格），已自動退出列隊。", NamedTextColor.RED))
+                )
+            }
+        } else if (session.game.status == GameStatus.PLAYING) {
+            if (outOfRange) {
+                val mjPlayer = session.game.players.find { it.uuid == playerUUID } as? com.mahjongplay.game.MahjongPlayer
+                if (mjPlayer != null && !mjPlayer.isBotTakeover) {
+                    mjPlayer.activateBotTakeover(session.game.rule.defaultBotDifficulty)
+                    session.renderer.updateSeatScoreDisplays()
+                    session.renderer.updateVisibility(mjPlayer)
+                    session.bridge.updateHud()
+                    session.bridge.broadcast(
+                        Component.text("[麻將] 玩家【${mjPlayer.rawDisplayName}】$reason，已自動切換為 🤖 代打模式！", NamedTextColor.GOLD)
+                    )
+                    player.sendMessage(
+                        Component.text("[麻將] ", NamedTextColor.GOLD)
+                            .append(Component.text("你因 $reason，系統已自動為你開啟 🤖 代打模式！(返回牌桌或按 F 鍵可恢復手動)", NamedTextColor.YELLOW))
+                    )
+                }
+            }
+        }
     }
 
     @EventHandler
@@ -76,6 +133,22 @@ class EntityInteractionListener(
             event.isCancelled = true
             sendChairResult(event.player, chairResult)
             return
+        }
+
+        // 對著麻將桌桌面方塊右鍵點擊：加入／離開麻將桌 或 開啟管理員介面
+        val tableSession = gameManager.getTableByTableTopBlock(block.location)
+        if (tableSession != null) {
+            val isAdmin = event.player.hasPermission("mahjongplay.admin") || event.player.isOp
+            if (isAdmin && (event.player.isSneaking || tableSession.game.status != GameStatus.WAITING)) {
+                com.mahjongplay.table.MahjongAdminGUI.open(event.player, tableSession, gameManager)
+                event.isCancelled = true
+                return
+            }
+            if (tableSession.game.status == GameStatus.WAITING) {
+                handleTableJoinLeave(event.player, tableSession)
+                event.isCancelled = true
+                return
+            }
         }
 
         if (block.type == Material.BARRIER &&
@@ -145,6 +218,39 @@ class EntityInteractionListener(
         }
     }
 
+    private fun handleTableJoinLeave(player: Player, session: com.mahjongplay.table.MahjongTableSession): Boolean {
+        val now = System.currentTimeMillis()
+        val prev = recentRightJoinLeaveInputAt[player.uniqueId]
+        if (prev != null && now - prev < 250L) {
+            return false
+        }
+        recentRightJoinLeaveInputAt[player.uniqueId] = now
+
+        if (session.game.status != GameStatus.WAITING) {
+            player.sendMessage(Component.text("[麻將] 遊戲正在進行中", NamedTextColor.RED))
+            return true
+        }
+
+        val playerUUID = player.uniqueId.toString()
+        val existingSession = gameManager.getSessionForPlayer(playerUUID)
+        if (existingSession != null && existingSession.tableId == session.tableId) {
+            gameManager.leaveTable(playerUUID)
+            player.sendMessage(Component.text("[麻將] 已離開麻將桌", NamedTextColor.YELLOW))
+            return true
+        }
+
+        if (existingSession != null) {
+            player.sendMessage(Component.text("[麻將] 你已經在另一張麻將桌中", NamedTextColor.RED))
+            return true
+        }
+        if (gameManager.joinTable(session.tableId, playerUUID, player.name)) {
+            player.sendMessage(Component.text("[麻將] 已加入麻將桌！", NamedTextColor.GREEN))
+        } else {
+            player.sendMessage(Component.text("[麻將] 無法加入（牌桌已滿）", NamedTextColor.RED))
+        }
+        return true
+    }
+
     @EventHandler
     fun onInteractEntity(event: PlayerInteractEntityEvent) {
         val clickedEntity = event.rightClicked
@@ -165,32 +271,34 @@ class EntityInteractionListener(
             }
         }
 
+        if (clickedEntity.scoreboardTags.contains("taiwanese_mahjong_table")) {
+            val tableSession = gameManager.getTableByTableEntity(clickedEntity)
+            if (tableSession != null) {
+                val isAdmin = player.hasPermission("mahjongplay.admin") || player.isOp
+                if (isAdmin && (player.isSneaking || tableSession.game.status != GameStatus.WAITING)) {
+                    event.isCancelled = true
+                    com.mahjongplay.table.MahjongAdminGUI.open(player, tableSession, gameManager)
+                    return
+                }
+                if (tableSession.game.status == GameStatus.WAITING) {
+                    event.isCancelled = true
+                    handleTableJoinLeave(player, tableSession)
+                    return
+                }
+            }
+        }
+
         if (clickedEntity !is Interaction) return
 
         val joinSession = gameManager.getTableByJoinInteraction(clickedEntity.uniqueId)
         if (joinSession != null) {
             event.isCancelled = true
-            if (joinSession.game.status != GameStatus.WAITING) {
-                player.sendMessage(Component.text("[麻將] 遊戲正在進行中", NamedTextColor.RED))
+            val isAdmin = player.hasPermission("mahjongplay.admin") || player.isOp
+            if (isAdmin && (player.isSneaking || joinSession.game.status != GameStatus.WAITING)) {
+                com.mahjongplay.table.MahjongAdminGUI.open(player, joinSession, gameManager)
                 return
             }
-
-            val existingSession = gameManager.getSessionForPlayer(playerUUID)
-            if (existingSession != null && existingSession.tableId == joinSession.tableId) {
-                gameManager.leaveTable(playerUUID)
-                player.sendMessage(Component.text("[麻將] 已離開麻將桌", NamedTextColor.YELLOW))
-                return
-            }
-
-            if (existingSession != null) {
-                player.sendMessage(Component.text("[麻將] 你已經在另一張麻將桌中", NamedTextColor.RED))
-                return
-            }
-            if (gameManager.joinTable(joinSession.tableId, playerUUID, player.name)) {
-                player.sendMessage(Component.text("[麻將] 已加入麻將桌！", NamedTextColor.GREEN))
-            } else {
-                player.sendMessage(Component.text("[麻將] 無法加入（牌桌已滿）", NamedTextColor.RED))
-            }
+            handleTableJoinLeave(player, joinSession)
             return
         }
 
@@ -362,6 +470,15 @@ class EntityInteractionListener(
             if (chairResult != null) {
                 event.isCancelled = true
                 sendChairResult(event.player, chairResult)
+                return
+            }
+        }
+
+        if (clickedEntity.scoreboardTags.contains("taiwanese_mahjong_table")) {
+            val tableSession = gameManager.getTableByTableEntity(clickedEntity)
+            if (tableSession != null && tableSession.game.status == GameStatus.WAITING) {
+                event.isCancelled = true
+                handleTableJoinLeave(event.player, tableSession)
             }
         }
     }

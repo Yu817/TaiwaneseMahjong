@@ -38,13 +38,14 @@ class MahjongChairDisplay(
 
         val spawnLoc = location.clone()
         if (spawnLoc.isChunkLoaded) {
-            val existing = location.world.getNearbyEntities(spawnLoc, 0.6, 0.6, 0.6)
+            val existing = location.world.getNearbyEntities(spawnLoc, 1.2, 1.2, 1.2)
                 .filterIsInstance<ItemDisplay>()
                 .filter { it.scoreboardTags.contains("taiwanese_mahjong_chair") }
             if (existing.isNotEmpty()) {
                 val primary = existing.first()
                 existing.drop(1).forEach { it.remove() }
                 ownershipTag?.let(primary::addScoreboardTag)
+                primary.teleport(spawnLoc)
                 normalizeOrientation(primary)
                 entity = primary
                 ensureSeatEntity()
@@ -110,18 +111,18 @@ class MahjongChairDisplay(
         seatEntity = null
         val seatLoc = seatLocation()
         if (seatLoc.isChunkLoaded) {
-            seatLoc.world.getNearbyEntities(seatLoc, 0.25, 0.25, 0.25)
+            seatLoc.world.getNearbyEntities(seatLoc, 1.2, 1.2, 1.2)
                 .filterIsInstance<ArmorStand>()
                 .filter { stand ->
                     stand.scoreboardTags.contains("taiwanese_mahjong_seat") &&
-                        stand.location.distanceSquared(seatLoc) < 0.01
+                        stand.location.distanceSquared(seatLoc) < 1.5
                 }
                 .forEach { it.remove() }
         }
         entity?.remove()
         entity = null
         if (location.isChunkLoaded) {
-            location.world.getNearbyEntities(location, 0.6, 0.6, 0.6)
+            location.world.getNearbyEntities(location, 1.2, 1.2, 1.2)
                 .filterIsInstance<ItemDisplay>()
                 .filter { it.scoreboardTags.contains("taiwanese_mahjong_chair") }
                 .forEach { it.remove() }
@@ -133,34 +134,20 @@ class MahjongChairDisplay(
     }
 
     private fun ensureSeatEntity(): ArmorStand {
-        seatEntity?.takeIf { it.isValid }?.let {
-            it.teleport(seatLocation())
-            it.setRotation(yaw, 0f)
-            return it
+        val current = seatEntity
+        if (current != null && current.isValid) {
+            current.teleport(seatLocation())
+            current.setMarker(true)
+            current.setRotation(yaw, 0f)
+            return current
         }
-        seatEntity?.remove()
 
         val seatLoc = seatLocation()
-        val migrated = if (seatLoc.isChunkLoaded) {
-            seatLoc.world.getNearbyEntities(seatLoc, 0.4, 0.4, 0.4)
+        if (seatLoc.isChunkLoaded) {
+            seatLoc.world.getNearbyEntities(seatLoc, 1.5, 1.5, 1.5)
                 .filterIsInstance<ArmorStand>()
-                .firstOrNull { stand ->
-                    stand.scoreboardTags.contains("taiwanese_mahjong_seat") &&
-                        stand.location.distanceSquared(seatLoc) < 0.05
-                }
-        } else null
-        if (migrated != null) {
-            ownershipTag?.let(migrated::addScoreboardTag)
-            seatEntity = migrated
-            migrated.isInvisible = true
-            migrated.isInvulnerable = true
-            migrated.isSilent = true
-            migrated.isCollidable = false
-            migrated.setGravity(false)
-            migrated.isSmall = true
-            migrated.setMarker(false)
-            migrated.setRotation(yaw, 0f)
-            return migrated
+                .filter { it.scoreboardTags.contains("taiwanese_mahjong_seat") }
+                .forEach { it.remove() }
         }
 
         val seat = location.world.spawnEntity(seatLoc, EntityType.ARMOR_STAND) as ArmorStand
@@ -171,7 +158,7 @@ class MahjongChairDisplay(
         seat.isCollidable = false
         seat.setGravity(false)
         seat.isSmall = true
-        seat.setMarker(false)
+        seat.setMarker(true)
         seat.setBasePlate(false)
         seat.setArms(false)
         seat.setCanPickupItems(false)
@@ -202,9 +189,9 @@ class MahjongChairDisplay(
     }
 
     companion object {
-        // Matches the table model's item-pivot convention and places the
-        // imported chair's seat close to the top of the invisible support block.
-        const val ORIGIN_Y_OFFSET = 0.75
-        const val SEAT_Y_OFFSET = -0.20
+        // Places the chair model slightly lower (0.50) to firmly touch the floor
+        // and places the marker seat ArmorStand right on top of the seat cushion (0.05).
+        const val ORIGIN_Y_OFFSET = 0.50
+        const val SEAT_Y_OFFSET = 0.05
     }
 }
