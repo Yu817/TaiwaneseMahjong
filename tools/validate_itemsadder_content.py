@@ -34,6 +34,7 @@ EXPECTED_TILE_ITEMS = [
 TILE_MODEL_DATA_BASE = 900001
 TABLE_MODEL_DATA = 900044
 CHAIR_MODEL_DATA = 900045
+DICE_MODEL_DATA = 900046
 
 
 def fail(message: str) -> None:
@@ -96,8 +97,8 @@ def validate_tile_items(items: dict[str, dict[str, str | int]]) -> None:
 
 
 def validate_table_item(items: dict[str, dict[str, str | int]]) -> None:
-    if list(items) != ["mahjong_table"]:
-        fail("table.yml must contain only the mahjong_table item")
+    if list(items) != ["mahjong_table", "mahjong_dice_white"]:
+        fail("table.yml must contain mahjong_table followed by mahjong_dice_white")
 
     item = items["mahjong_table"]
     if item.get("material") != "PAPER":
@@ -106,6 +107,14 @@ def validate_table_item(items: dict[str, dict[str, str | int]]) -> None:
         fail(f"mahjong_table: expected model_id {TABLE_MODEL_DATA}")
     if item.get("model_path") != "item/mahjong_table":
         fail("mahjong_table: model_path must be item/mahjong_table")
+
+    dice = items["mahjong_dice_white"]
+    if dice.get("material") != "PAPER":
+        fail("mahjong_dice_white: material must be PAPER")
+    if dice.get("model_id") != DICE_MODEL_DATA:
+        fail(f"mahjong_dice_white: expected model_id {DICE_MODEL_DATA}")
+    if dice.get("model_path") != "item/mahjong_dice_white":
+        fail("mahjong_dice_white: model_path must be item/mahjong_dice_white")
 
 
 def validate_chair_item(items: dict[str, dict[str, str | int]]) -> None:
@@ -227,6 +236,31 @@ def validate_chair_model() -> None:
         fail("mahjong_chair.json must retain the imported chair geometry")
 
 
+def validate_dice_model() -> None:
+    model_file = MODEL_ROOT / "mahjong_dice_white.json"
+    if not model_file.is_file():
+        fail(f"missing dice model {model_file.relative_to(PROJECT)}")
+
+    # Keep both the 2-D inventory texture and the 3-D display texture under
+    # validation.  The model currently renders the latter, while ItemsAdder
+    # and older clients may still resolve the former.
+    for texture_name in ("mahjong_dice_white", "mahjong_dice_white_3d"):
+        texture_path = TEXTURE_ROOT / "item" / f"{texture_name}.png"
+        if not texture_path.is_file():
+            fail(f"missing dice texture {texture_path.relative_to(PROJECT)}")
+        validate_png(texture_path)
+
+    model = json.loads(model_file.read_text(encoding="utf-8"))
+    textures = model.get("textures", {})
+    expected_texture = "mahjongcraft:item/mahjong_dice_white_3d"
+    if textures.get("0") != expected_texture:
+        fail("mahjong_dice_white.json texture 0 must use mahjongcraft:item/mahjong_dice_white_3d")
+    if textures.get("particle") != expected_texture:
+        fail("mahjong_dice_white.json particle texture must use mahjongcraft:item/mahjong_dice_white_3d")
+    if not model.get("elements"):
+        fail("mahjong_dice_white.json must retain dice geometry")
+
+
 def validate_model_data_mapping(
     tile_items: dict[str, dict[str, str | int]],
     table_items: dict[str, dict[str, str | int]],
@@ -250,6 +284,9 @@ def validate_model_data_mapping(
     chair_match = re.search(r"const val CHAIR\s*=\s*(\d+)", source)
     if not chair_match or int(chair_match.group(1)) != CHAIR_MODEL_DATA:
         fail(f"MahjongModelData.CHAIR must be {CHAIR_MODEL_DATA}")
+    dice_match = re.search(r"const val DICE_WHITE\s*=\s*(\d+)", source)
+    if not dice_match or int(dice_match.group(1)) != DICE_MODEL_DATA:
+        fail(f"MahjongModelData.DICE_WHITE must be {DICE_MODEL_DATA}")
 
     tile_display = TILE_DISPLAY_SOURCE.read_text(encoding="utf-8")
     if "MahjongModelData.TILE_BASE + tile.code" not in tile_display:
@@ -279,6 +316,7 @@ def main() -> int:
         validate_tile_models()
         validate_table_model()
         validate_chair_model()
+        validate_dice_model()
         validate_model_data_mapping(tile_items, table_items, furniture_items)
         validate_layout()
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as error:
@@ -289,7 +327,8 @@ def main() -> int:
         "ItemsAdder content valid: "
         f"{len(tile_items)} tiles using IDs {TILE_MODEL_DATA_BASE}-{TILE_MODEL_DATA_BASE + len(tile_items) - 1}, "
         f"1 table using ID {TABLE_MODEL_DATA}, 1 chair using ID {CHAIR_MODEL_DATA}, "
-        "46 tile child models, 1 table model and 1 chair model"
+        f"1 die using ID {DICE_MODEL_DATA}, 46 tile child models, 1 table model, "
+        "1 chair model and 1 die model"
     )
     return 0
 

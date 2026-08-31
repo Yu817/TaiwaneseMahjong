@@ -10,14 +10,11 @@ defaults:
 
   starting-points: 16000
 
-  # 結算公式：底分 + 台數 * 每台分數。
-  # base-points: 0 會維持舊版只有台數計分的行為。
+  # 台灣底台制：每筆支付 = 底 + 台數 * 每台籌碼。
   base-points: 0
   points-per-tai: 1000
   minimum-tai: NONE
   thinking-time: NORMAL
-  honba-points: 100
-  dealer-tsumo-multiplier: 2
   flowers: true
 
 teleport:
@@ -25,7 +22,18 @@ teleport:
   # 玩家傳送到牌桌四側座位的距離（方塊）。
   seat-distance: 2.0
 
+economy:
+  # 只有真人座位彼此付款時才使用 Vault；Bot 相關付款仍只算牌局積分。
+  enabled: true
+
 display:
   # 牌桌 3D 模型縮放倍率（預設 1.8，解決 16-17 張手牌/花牌卡邊框問題）。
   table-scale: 1.8
-
+  # 手牌距牌桌中心的距離（預設 1.30 方塊，與牌牆保持約 0.18 方塊間距，避免重疊）。
+  hand-distance: 1.30
+  # 抓牌演出：0 可停用等待與飛行，保留相同規則流程。
+  draw-animation-ms: 240
+  initial-deal-animation-ms: 100
+  initial-deal-group-pause-ms: 70
+  # 開局由莊家擲三顆骰子；設為 0 可略過動畫，但仍會依骰點決定開門位置。
+  opening-dice-animation-ms: 2200

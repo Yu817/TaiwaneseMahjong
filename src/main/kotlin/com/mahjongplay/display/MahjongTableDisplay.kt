@@ -15,6 +15,7 @@ class MahjongTableDisplay(
     private val center: Location,
     var yaw: Float = DEFAULT_YAW,
     val scale: Float = DEFAULT_SCALE,
+    private val ownershipTag: String? = null,
 ) {
     var entity: ItemDisplay? = null
         private set
@@ -34,6 +35,7 @@ class MahjongTableDisplay(
             if (existing.isNotEmpty()) {
                 val primary = existing.first()
                 existing.drop(1).forEach { it.remove() }
+                ownershipTag?.let(primary::addScoreboardTag)
                 normalizeOrientation(primary)
                 applyTransform(primary, yaw)
                 entity = primary
@@ -47,6 +49,7 @@ class MahjongTableDisplay(
         // display entities without touching the join text.
         display.isPersistent = true
         display.addScoreboardTag("taiwanese_mahjong_table")
+        ownershipTag?.let(display::addScoreboardTag)
         display.setViewRange(1.0f)
         display.setVisibleByDefault(true)
         display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE)
@@ -83,7 +86,11 @@ class MahjongTableDisplay(
         if (loc.isChunkLoaded) {
             center.world.getNearbyEntities(loc, 1.0, 1.0, 1.0)
                 .filterIsInstance<ItemDisplay>()
-                .filter { it.scoreboardTags.contains("taiwanese_mahjong_table") }
+                .filter {
+                    (ownershipTag?.let(it.scoreboardTags::contains) == true) ||
+                        (it.scoreboardTags.contains("taiwanese_mahjong_table") &&
+                            it.location.distanceSquared(loc) < 0.01)
+                }
                 .forEach { it.remove() }
         }
     }

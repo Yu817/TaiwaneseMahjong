@@ -3,6 +3,7 @@ package com.mahjongplay.model
 import com.mahjongplay.game.MahjongBot
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class TaiwanRuleRegressionTest {
@@ -92,6 +93,12 @@ class TaiwanRuleRegressionTest {
         assertFalse(settlement.taiList.any { it.name == "門花(夏)" })
     }
 
+    @Test
+    fun `score multiplication cannot wrap into a negative number`() {
+        val settlement = scoreWithPoints(Int.MAX_VALUE, Int.MAX_VALUE)
+        assertEquals(Int.MAX_VALUE, settlement.score)
+    }
+
     private fun score(
         isTsumo: Boolean = false,
         seatWind: Wind = Wind.SOUTH,
@@ -114,6 +121,27 @@ class TaiwanRuleRegressionTest {
             roundWind = Wind.EAST,
             pointsPerTai = 1000,
             context = context,
+        )
+    }
+
+    private fun scoreWithPoints(basePoints: Int, pointsPerTai: Int): TaiwanSettlement {
+        val hand = winningHand()
+        val shape = TaiwaneseHandEvaluator.findWinningShapes(hand, emptyList()).first()
+        return TaiwaneseScorer.score(
+            displayName = "test",
+            uuid = "test",
+            isRealPlayer = false,
+            botCode = MahjongTile.UNKNOWN.code,
+            concealedTiles = hand,
+            fuuroList = emptyList(),
+            flowers = emptyList(),
+            shape = shape,
+            winningTile = MahjongTile.M9,
+            isTsumo = true,
+            seatWind = Wind.EAST,
+            roundWind = Wind.EAST,
+            pointsPerTai = pointsPerTai,
+            basePoints = basePoints,
         )
     }
 

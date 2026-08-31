@@ -34,6 +34,10 @@ class EntityInteractionListener(
      */
     private val recentLeftDiscardInputAt = mutableMapOf<UUID, Long>()
 
+    fun clearRecentInput(playerUUID: UUID) {
+        recentLeftDiscardInputAt.remove(playerUUID)
+    }
+
     @EventHandler(ignoreCancelled = true)
     fun onPlayerMove(event: PlayerMoveEvent) {
         val to = event.to ?: return
@@ -92,6 +96,32 @@ class EntityInteractionListener(
     fun onLeftClickEntity(event: EntityDamageByEntityEvent) {
         val player = event.damager as? Player ?: return
         val clickedEntity = event.entity as? Interaction ?: return
+        val playerUUID = player.uniqueId.toString()
+
+        val game = gameManager.getGameForPlayer(playerUUID)
+        if (game != null) {
+            val renderer = gameManager.getRenderer(game)
+            if (renderer != null && renderer.isSeatWindInteraction(clickedEntity.uniqueId)) {
+                event.isCancelled = true
+                renderer.handleSeatWindClick(player, clickedEntity.uniqueId)
+                return
+            }
+            val actionDisplay = renderer?.getActionByInteraction(clickedEntity.uniqueId)
+            if (actionDisplay != null && actionDisplay.ownerUUID == playerUUID) {
+                event.isCancelled = true
+                val mjPlayer = game.realPlayers.find { it.uuid == playerUUID } as? MahjongPlayer
+                if (actionDisplay.subOptions != null && actionDisplay.subOptions.isNotEmpty()) {
+                    renderer.expandSubMenu(playerUUID, actionDisplay.subOptions)
+                    player.playSound(player.location, org.bukkit.Sound.UI_BUTTON_CLICK, org.bukkit.SoundCategory.PLAYERS, 0.5f, 1.4f)
+                } else if (mjPlayer != null) {
+                    if (actionDisplay.behavior == MahjongGameBehavior.SKIP) {
+                        MahjongSoundHelper.playSkip(player)
+                    }
+                    mjPlayer.resolveAction(actionDisplay.behavior, actionDisplay.data)
+                }
+                return
+            }
+        }
 
         if (handleLeftTileInput(player, clickedEntity)) {
             event.isCancelled = true
@@ -207,6 +237,11 @@ class EntityInteractionListener(
         val game = gameManager.getGameForPlayer(playerUUID) ?: return
         val mjPlayer = game.realPlayers.find { it.uuid == playerUUID } as? MahjongPlayer ?: return
         val renderer = gameManager.getRenderer(game) ?: return
+        if (renderer.isSeatWindInteraction(clickedEntity.uniqueId)) {
+            event.isCancelled = true
+            renderer.handleSeatWindClick(player, clickedEntity.uniqueId)
+            return
+        }
 
         val actionDisplay = renderer.getActionByInteraction(clickedEntity.uniqueId)
         if (actionDisplay != null && actionDisplay.ownerUUID == playerUUID) {
@@ -214,7 +249,11 @@ class EntityInteractionListener(
 
             if (actionDisplay.subOptions != null && actionDisplay.subOptions.isNotEmpty()) {
                 renderer.expandSubMenu(playerUUID, actionDisplay.subOptions)
+                player.playSound(player.location, org.bukkit.Sound.UI_BUTTON_CLICK, org.bukkit.SoundCategory.PLAYERS, 0.5f, 1.4f)
             } else {
+                if (actionDisplay.behavior == MahjongGameBehavior.SKIP) {
+                    MahjongSoundHelper.playSkip(player)
+                }
                 mjPlayer.resolveAction(actionDisplay.behavior, actionDisplay.data)
             }
             return
@@ -278,6 +317,8 @@ class EntityInteractionListener(
         val confirmed = renderer.confirmTileForDiscard(mjPlayer.uuid, clickedIndex)
         if (confirmed) {
             mjPlayer.resolveAction(MahjongGameBehavior.DISCARD, "${tile.code}")
+        } else {
+            MahjongSoundHelper.playTileSelect(player)
         }
         return true
     }

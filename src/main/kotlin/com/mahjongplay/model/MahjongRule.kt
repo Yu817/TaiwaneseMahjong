@@ -7,14 +7,14 @@ import net.kyori.adventure.text.format.NamedTextColor
 /**
  * 台灣麻將規則。
  *
- * 預設採 4 人、16 張手牌、144 張牌、最低一台起胡、每台 1000 分。
- * 不同地區的台麻細節差異很大，因此點數與最低台數保留為桌規設定，方便依牌桌習慣調整。
+ * 預設採 4 人、16 張手牌、144 張牌、最低一台起胡、每台 1000 籌碼。
+ * 每筆支付使用底台制：底 + 台數 × 每台籌碼。
  */
 data class MahjongRule(
     var length: GameLength = GameLength.TWO_WIND,
     var playerCount: Int = 4,
     var thinkingTime: ThinkingTime = ThinkingTime.NORMAL,
-    var startingPoints: Int = 16000,
+    var startingPoints: Int = 16_000,
     var minPointsToWin: Int = 0,
     var minimumTai: MinimumTai = MinimumTai.NONE,
     var spectate: Boolean = true,
@@ -22,11 +22,24 @@ data class MahjongRule(
     var roundsToPlay: Int = 16,
     var basePoints: Int = 0,
     var pointsPerTai: Int = 1000,
-    var honbaPoints: Int = 100,
-    var dealerTsumoMultiplier: Int = 2,
     var flowersEnabled: Boolean = true,
     var chairsEnabled: Boolean = true,
     var botResponseDelayMs: Long = MIN_BOT_RESPONSE_MS,
+    /** Normal turn and replacement draw travel time; 0 keeps the flow instant. */
+    var drawAnimationMs: Long = DEFAULT_DRAW_ANIMATION_MS,
+    /** A faster cadence keeps the 65-tile initial deal from feeling sluggish. */
+    var initialDealAnimationMs: Long = DEFAULT_INITIAL_DEAL_ANIMATION_MS,
+    var initialDealGroupPauseMs: Long = DEFAULT_INITIAL_DEAL_GROUP_PAUSE_MS,
+    /** Three-dice opening roll, including the short settled-result pause. */
+    var openingDiceAnimationMs: Long = DEFAULT_OPENING_DICE_ANIMATION_MS,
+    /** 開局抓位（抓風）開關 */
+    var seatWindDrawEnabled: Boolean = true,
+    /** 是否啟用機器人（Bots）補位 */
+    var botsEnabled: Boolean = true,
+    /** 預設機器人難度 */
+    var defaultBotDifficulty: com.mahjongplay.game.BotDifficulty = com.mahjongplay.game.BotDifficulty.MEDIUM,
+    /** 旁觀玩家是否可看手牌 */
+    var spectatorSeeHands: Boolean = false,
 ) {
     val isTaiwanese: Boolean
         get() = true
@@ -56,18 +69,18 @@ data class MahjongRule(
                 .append(Component.text("$displayCircleText（連莊另計）", NamedTextColor.GREEN)),
             Component.text(" • 手牌: ", NamedTextColor.YELLOW)
                 .append(Component.text("16 張／${playerCount} 人", NamedTextColor.AQUA)),
-            Component.text(" • 起始分數: ", NamedTextColor.YELLOW)
+            Component.text(" • 起始積分: ", NamedTextColor.YELLOW)
                 .append(Component.text("$startingPoints", NamedTextColor.GREEN)),
             Component.text(" • 底／台: ", NamedTextColor.YELLOW)
-                .append(Component.text("$basePoints／$pointsPerTai 分", NamedTextColor.GREEN)),
+                .append(Component.text("$basePoints／$pointsPerTai 積分", NamedTextColor.GREEN)),
             Component.text(" • 最低台數: ", NamedTextColor.YELLOW)
                 .append(Component.text("${minimumTai.tai} 台", NamedTextColor.GREEN)),
             Component.text(" • 花牌補牌: ", NamedTextColor.YELLOW)
                 .append(if (flowersEnabled) enabled else disabled),
             Component.text(" • 椅子: ", NamedTextColor.YELLOW)
                 .append(if (chairsEnabled) enabled else disabled),
-            Component.text(" • Bot 反應: ", NamedTextColor.YELLOW)
-                .append(Component.text("${botSeconds} 秒", NamedTextColor.AQUA)),
+            Component.text(" • Bots 機器人: ", NamedTextColor.YELLOW)
+                .append(if (botsEnabled) Component.text("開啟（${defaultBotDifficulty.displayName}・${botSeconds}秒）", NamedTextColor.GREEN) else disabled),
             Component.text(" • 旁觀: ", NamedTextColor.YELLOW)
                 .append(if (spectate) enabled else disabled)
         )
@@ -80,6 +93,12 @@ data class MahjongRule(
         const val MAX_ROUNDS = 16
         const val MIN_BOT_RESPONSE_MS = 1000L
         const val MAX_BOT_RESPONSE_MS = 5000L
+        const val DEFAULT_DRAW_ANIMATION_MS = 240L
+        const val DEFAULT_INITIAL_DEAL_ANIMATION_MS = 100L
+        const val DEFAULT_INITIAL_DEAL_GROUP_PAUSE_MS = 70L
+        const val DEFAULT_OPENING_DICE_ANIMATION_MS = 2200L
+        const val MAX_OPENING_DICE_ANIMATION_MS = 5000L
+        const val MAX_DRAW_ANIMATION_MS = 2000L
     }
 
     enum class GameLength(

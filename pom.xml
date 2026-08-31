@@ -14,7 +14,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>2.0.21</kotlin.version>
+        <kotlin.version>2.1.10</kotlin.version>
         <kotlin.compiler.jvmTarget>21</kotlin.compiler.jvmTarget>
         <maven.compiler.release>21</maven.compiler.release>
     </properties>
@@ -65,6 +65,12 @@
             <groupId>fr.skytasul</groupId>
             <artifactId>glowingentities</artifactId>
             <version>1.4.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.MilkBowl</groupId>
+            <artifactId>VaultAPI</artifactId>
+            <version>1.7</version>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>

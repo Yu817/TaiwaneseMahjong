@@ -5,6 +5,8 @@ description: Taiwanese 16-tile Mahjong in Minecraft
 api-version: '1.21'
 authors:
   - Yu817
+softdepend:
+  - Vault
 commands:
   mahjong:
     description: Mahjong game commands

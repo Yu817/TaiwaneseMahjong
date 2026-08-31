@@ -1,41 +1,70 @@
 package com.mahjongplay.display
 
 import com.mahjongplay.MahjongPlayPlugin
+import com.mahjongplay.game.ActionDisplayOption
+import com.mahjongplay.game.BotDifficulty
+import com.mahjongplay.model.TaiwanSettlement
+import com.mahjongplay.model.Wind
 import com.mahjongplay.display.TileConstants.DEPTH
+import com.mahjongplay.display.TileConstants.DRAWN_TILE_GAP
+import com.mahjongplay.display.TileConstants.HAND_GAP
 import com.mahjongplay.display.TileConstants.HEIGHT
 import com.mahjongplay.display.TileConstants.PADDING
 import com.mahjongplay.display.TileConstants.WIDTH
-import com.mahjongplay.game.*
-import com.mahjongplay.model.*
+import com.mahjongplay.game.DrawReason
+import com.mahjongplay.game.GameEventListener
+import com.mahjongplay.game.MahjongBot
+import com.mahjongplay.game.MahjongPlayer
+import com.mahjongplay.game.MahjongGame
+import com.mahjongplay.game.MahjongPlayerBase
+import com.mahjongplay.game.OpeningDiceEvent
+import com.mahjongplay.game.SeatWindDrawStartEvent
+import com.mahjongplay.game.SeatWindTilePickedEvent
+import com.mahjongplay.game.SeatWindTurnPromptEvent
+import com.mahjongplay.game.SeatWindDrawCompleteEvent
+import com.mahjongplay.game.TileDrawEvent
+import com.mahjongplay.game.WallInitializedEvent
+import com.mahjongplay.model.ClaimTarget
+import com.mahjongplay.model.MahjongGameBehavior
+import com.mahjongplay.model.MahjongRound
+import com.mahjongplay.model.MahjongTile
+import com.mahjongplay.model.ScoreItem
+import com.mahjongplay.table.mahjongTableEntityTag
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
-import org.bukkit.ChatColor
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.entity.Display
 import org.bukkit.entity.EntityType
+import org.bukkit.entity.ItemDisplay
 import org.bukkit.entity.Player
 import org.bukkit.entity.TextDisplay
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 data class ActionDisplay(
-    val textDisplay: TextDisplay,
+    val textDisplay: TextDisplay? = null,
+    val tileDisplays: List<MahjongTileDisplay> = emptyList(),
     val interaction: org.bukkit.entity.Interaction,
     val behavior: MahjongGameBehavior,
     val data: String,
     val ownerUUID: String,
     val subOptions: List<ActionDisplayOption>? = null,
     val layoutSpacing: Double = 1.25,
+    val lateralOffset: Double = 0.0,
 )
+
+data class AimedTileClick(val index: Int, val confirmed: Boolean)
 
 class BoardRenderer(
     val game: MahjongGame,
     val tableCenter: Location,
     val tableScale: Float = MahjongTableDisplay.DEFAULT_SCALE,
+    val handDistance: Double = DEFAULT_HAND_DISTANCE,
+    val wallDistance: Double? = null,
 ) : GameEventListener {
 
     val handDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
@@ -43,28 +72,56 @@ class BoardRenderer(
     private val discardDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val fuuroDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
     private val flowerDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
-    private val botNameDisplays = mutableListOf<TextDisplay>()
+    private val seatScoreDisplays = mutableListOf<TextDisplay>()
     private var floatingCenterDisplay: MahjongTileDisplay? = null
+    var roundSettlementDisplay: TextDisplay? = null
     private val selectedTileIndices = ConcurrentHashMap<String, Int>()
+    private val aimStabilizers = ConcurrentHashMap<String, AimStabilizer>()
     private val actionDisplays = ConcurrentHashMap<String, MutableList<ActionDisplay>>()
     private val highlightedDiscards = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
+    private val hoverRemainingDisplays = ConcurrentHashMap<String, TextDisplay>()
+    val seatWindDrawRenderer by lazy {
+        SeatWindDrawRenderer(
+            center = tableCenter,
+            surfaceY = { flatTileY },
+            tableScale = tableScale,
+            showToAllViewers = ::showToAllViewers,
+            ownershipTag = entityOwnershipTag,
+        )
+    }
+
+    private val wallRenderer by lazy {
+        WallRenderer(
+            game = game,
+            tableCenter = tableCenter,
+            bottomTileY = flatTileY,
+            drawDestination = ::drawFlightTarget,
+            showToAllViewers = ::showToAllViewers,
+            wallDistance = wallDistance,
+            ownershipTag = entityOwnershipTag,
+        )
+    }
+    private val openingDiceRenderer by lazy { OpeningDiceRenderer(tableCenter, ::surfaceY, entityOwnershipTag) }
 
     companion object {
-        private const val RAISE_OFFSET = 0.10
-        // Keep each player's standing hand a little toward their screen-right
-        // so the outermost tile does not sit against the table leg/rim.
-        private const val HAND_RIGHT_OFFSET = 0.10
+        const val DEFAULT_HAND_DISTANCE = 1.30
+        private const val RAISE_OFFSET = 0.12
+        // 手牌整列微調向左（修正先前向右偏 0.10 導致歪斜問題）
+        private const val HAND_LEFT_OFFSET = 0.05
         private const val DISCARD_HOVER_DISTANCE = 8.0
-        private const val DISCARD_HOVER_CENTER_TOLERANCE = 0.14
-        private const val ACTION_BUTTON_MIN_SPACING = 1.25
-        private const val ACTION_BUTTON_GAP = 0.35
+        private const val DISCARD_HOVER_VERTICAL_TOLERANCE = 0.09
+        private const val DISCARD_HOVER_STABILITY_MS = 100L
+        private const val ACTION_BUTTON_MIN_SPACING = 0.55
+        private const val ACTION_BUTTON_GAP = 0.15
     }
 
     private val world: World get() = tableCenter.world
+    private val entityOwnershipTag: String = mahjongTableEntityTag(tableCenter)
 
     private val surfaceY: Double get() = tableCenter.blockY + MahjongTableDisplay.greenTopOffset(tableScale)
     private val standingTileY: Double get() = surfaceY + HEIGHT / 2.0
     private val flatTileY: Double get() = surfaceY + DEPTH / 2.0
+    val handRadialOffset: Double get() = handDistance
     private val furoCornerEdge: Double get() = tableScale * (1.34 / 1.5)
     private val furoRadialOffset: Double get() = tableScale * (1.32 / 1.5)
 
@@ -117,9 +174,7 @@ class BoardRenderer(
 
     private fun actionButtonSpacing(options: List<ActionDisplayOption>): Double {
         val longestLabelWidth = options.maxOfOrNull { option ->
-            // Chinese glyphs and the bold display scale are deliberately given
-            // a conservative width so long "吃 ..." labels do not overlap.
-            option.label.codePoints().count().toDouble() * 0.24 + 0.25
+            option.label.codePoints().count().toDouble() * 0.08 + 0.25
         } ?: 0.0
         return maxOf(ACTION_BUTTON_MIN_SPACING, longestLabelWidth + ACTION_BUTTON_GAP)
     }
@@ -127,7 +182,63 @@ class BoardRenderer(
     override fun onRoundStart(game: MahjongGame, round: MahjongRound) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
             clearAllDisplays()
-            spawnBotNameTags()
+            spawnSeatScoreDisplays()
+        })
+    }
+
+    override fun onWallInitialized(event: WallInitializedEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            wallRenderer.initialize(event)
+        })
+    }
+
+    override fun onSeatWindDrawStarted(event: SeatWindDrawStartEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            openingDiceRenderer.begin(OpeningDiceEvent(event.dice, event.starterSeatIndex, 2000L))
+            seatWindDrawRenderer.begin(event, game)
+        })
+    }
+
+    override fun onSeatWindTurnPrompt(event: SeatWindTurnPromptEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            seatWindDrawRenderer.promptPicker(event, game)
+        })
+    }
+
+    override fun onSeatWindTilePicked(event: SeatWindTilePickedEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            seatWindDrawRenderer.onTilePicked(event, game)
+        })
+    }
+
+    override fun onSeatWindDrawCompleted(event: SeatWindDrawCompleteEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            seatWindDrawRenderer.onCompleted(event, game)
+            MahjongPlayPlugin.instance.tableManager.reseatPlayers(game)
+        })
+    }
+
+    override fun onOpeningDiceStarted(event: OpeningDiceEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            openingDiceRenderer.begin(event)
+        })
+    }
+
+    override fun onOpeningDiceCompleted(event: OpeningDiceEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            openingDiceRenderer.complete(event)
+        })
+    }
+
+    override fun onTileDrawStarted(event: TileDrawEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            wallRenderer.beginDraw(event)
+        })
+    }
+
+    override fun onTileDrawCompleted(event: TileDrawEvent) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            wallRenderer.completeDraw(event)
         })
     }
 
@@ -166,6 +277,70 @@ class BoardRenderer(
         })
     }
 
+    override fun onTsumo(player: MahjongPlayerBase, tile: MahjongTile, settlement: TaiwanSettlement) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            updateSeatScoreDisplays()
+            val taiStrs = settlement.taiList.map { "${it.name}${it.tai}台" }
+            showRoundSettlement(
+                title = "🎉【自摸胡牌！】",
+                subtitle = "胡牌者：${player.displayName}   胡牌：${tile.displayName}",
+                taiDetails = taiStrs,
+                scoreInfo = "合計 ${settlement.tai} 台，每家支付 ${settlement.score} 積分",
+            )
+        })
+    }
+
+    override fun onRon(winners: List<MahjongPlayerBase>, loser: MahjongPlayerBase, tile: MahjongTile, settlements: List<TaiwanSettlement>) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            updateSeatScoreDisplays()
+            val winnerNames = winners.joinToString { it.displayName }
+            val taiStrs = settlements.flatMap { s -> s.taiList.map { "${it.name}${it.tai}台" } }
+            val totalScore = settlements.sumOf { it.score }
+            showRoundSettlement(
+                title = "🎉【榮和胡牌！】",
+                subtitle = "胡牌者：$winnerNames   放銃者：${loser.displayName}",
+                taiDetails = taiStrs,
+                scoreInfo = "放銃支付合計 $totalScore 積分",
+            )
+        })
+    }
+
+    fun showRoundSettlement(title: String, subtitle: String, taiDetails: List<String>, scoreInfo: String) {
+        roundSettlementDisplay?.remove()
+        val loc = Location(tableCenter.world, tableCenter.x, flatTileY + 1.25, tableCenter.z)
+        val td = tableCenter.world.spawnEntity(loc, EntityType.TEXT_DISPLAY) as TextDisplay
+        td.isPersistent = false
+        td.addScoreboardTag(entityOwnershipTag)
+        td.billboard = Display.Billboard.CENTER
+        td.backgroundColor = Color.fromARGB(225, 12, 18, 28)
+        td.brightness = Display.Brightness(15, 15)
+        td.isShadowed = true
+        td.setViewRange(1.2f)
+        td.alignment = TextDisplay.TextAlignment.CENTER
+
+        var comp = Component.text(title, NamedTextColor.GOLD).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false)
+            .append(Component.newline())
+            .append(Component.text(subtitle, NamedTextColor.YELLOW).decoration(TextDecoration.ITALIC, false))
+        if (taiDetails.isNotEmpty()) {
+            comp = comp.append(Component.newline())
+                .append(Component.text("【台數】 ", NamedTextColor.AQUA).decoration(TextDecoration.ITALIC, false))
+                .append(Component.text(taiDetails.joinToString("、"), NamedTextColor.WHITE).decoration(TextDecoration.ITALIC, false))
+        }
+        if (scoreInfo.isNotEmpty()) {
+            comp = comp.append(Component.newline())
+                .append(Component.text(scoreInfo, NamedTextColor.GREEN).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
+        }
+
+        td.text(comp)
+        roundSettlementDisplay = td
+    }
+
+    override fun onScoreSettlement(settlement: com.mahjongplay.model.ScoreSettlement) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            updateSeatScoreDisplays()
+        })
+    }
+
     override fun onGameEnd(game: MahjongGame, scoreList: List<ScoreItem>) {
         val clearTask = Runnable { clearAllDisplays() }
         if (MahjongPlayPlugin.instance.isEnabled) {
@@ -180,6 +355,7 @@ class BoardRenderer(
         if (seatIndex < 0) return
 
         selectedTileIndices.remove(player.uuid)
+        aimStabilizers.remove(player.uuid)
         unhighlightDiscards(player.uuid)
 
         val backList = handDisplays.getOrPut(player.uuid) { mutableListOf() }
@@ -189,9 +365,9 @@ class BoardRenderer(
         val tileCount = currentHands.size
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val dirOffset = 0.85 + DEPTH + HEIGHT
-        val totalWidth = tileCount * WIDTH + (tileCount - 1) * PADDING
-        val startOffset = totalWidth / 2.0 - HAND_RIGHT_OFFSET
+        val dirOffset = handRadialOffset
+        val totalWidth = tileCount * WIDTH + (tileCount - 1) * HAND_GAP
+        val startOffset = totalWidth / 2.0 + HAND_LEFT_OFFSET
         val yaw = seatYaw(seatIndex)
         val isRealPlayer = player.isRealPlayer
 
@@ -201,7 +377,7 @@ class BoardRenderer(
 
         currentHands.forEachIndexed { index, tile ->
             val isLast = index == tileCount - 1 && showGap
-            val tileOffset = index * (WIDTH + PADDING) + if (isLast) PADDING * 15.0 else 0.0
+            val tileOffset = index * (WIDTH + HAND_GAP) + if (isLast) DRAWN_TILE_GAP else 0.0
 
             val x = tableCenter.x + dir[0] * dirOffset + perp[0] * (startOffset - tileOffset)
             val z = tableCenter.z + dir[1] * dirOffset + perp[1] * (startOffset - tileOffset)
@@ -211,13 +387,15 @@ class BoardRenderer(
                 backList[index].updatePosition(loc, yaw, TileFace.STANDING)
                 ownerList[index].updateTile(tile)
                 ownerList[index].updatePosition(loc.clone(), yaw, TileFace.STANDING)
+                ownerList[index].entity?.teleportDuration = 4
             } else {
-                val backDisplay = MahjongTileDisplay(loc, MahjongTile.UNKNOWN, TileFace.STANDING, yaw)
+                val backDisplay = MahjongTileDisplay(loc, MahjongTile.UNKNOWN, TileFace.STANDING, yaw, ownershipTag = entityOwnershipTag)
                 backDisplay.spawn()
                 backList += backDisplay
 
-                val ownerDisplay = MahjongTileDisplay(loc.clone(), tile, TileFace.STANDING, yaw, interactive = isRealPlayer)
+                val ownerDisplay = MahjongTileDisplay(loc.clone(), tile, TileFace.STANDING, yaw, interactive = isRealPlayer, ownershipTag = entityOwnershipTag)
                 ownerDisplay.spawn()
+                ownerDisplay.entity?.teleportDuration = 4
                 ownerList += ownerDisplay
             }
         }
@@ -227,135 +405,111 @@ class BoardRenderer(
             ownerList.removeLast().remove()
         }
 
-        Bukkit.getScheduler().runTaskLater(MahjongPlayPlugin.instance, Runnable {
-            updateVisibility(player)
-        }, 1L)
+        updateVisibility(player)
     }
 
-    /**
-     * Refresh the tile under a player's crosshair while they are choosing a
-     * discard.  Entity-only ray tracing intentionally ignores the tabletop
-     * Barrier blocks, so the preview still works when the table is between the
-     * camera and the tile.
-     */
-    fun refreshDiscardHover(player: Player) {
+    fun findAimedTileIndex(player: Player): Int? {
         val playerUUID = player.uniqueId.toString()
-        val mjPlayer = game.realPlayers.find { it.uuid == playerUUID }
-        val pending = mjPlayer?.pendingAction
-        if (mjPlayer == null || pending == null || MahjongGameBehavior.DISCARD !in pending.behaviors) {
-            previewTileForDiscard(playerUUID, null)
-            return
+        val seatIndex = game.seat.indexOfFirst { it.uuid == playerUUID }
+        if (seatIndex < 0) return null
+        val displays = handOwnerDisplays[playerUUID] ?: return null
+        val indexedCenters = displays.mapIndexedNotNull { index, display ->
+            display.interactionEntity?.location?.toVector()?.let { index to it }
         }
-
-        val ownerDisplays = handOwnerDisplays[playerUUID]
+        if (indexedCenters.isEmpty()) return null
+        val normal = seatDirection(seatIndex)
+        val horizontal = seatPerpendicular(seatIndex)
         val eye = player.eyeLocation
-        val origin = eye.toVector()
-        val direction = eye.direction.normalize()
-        val toleranceSquared = DISCARD_HOVER_CENTER_TOLERANCE * DISCARD_HOVER_CENTER_TOLERANCE
-        val hoveredIndex = ownerDisplays
-            ?.mapIndexedNotNull { index, display ->
-                val point = display.interactionEntity?.location?.toVector() ?: return@mapIndexedNotNull null
-                val relative = point.clone().subtract(origin)
-                val along = relative.dot(direction)
-                if (along <= 0.0 || along > DISCARD_HOVER_DISTANCE) return@mapIndexedNotNull null
+        val resolvedIndex = TileAimResolver.findOnHandPlane(
+            origin = eye.toVector(),
+            direction = eye.direction,
+            planePoint = indexedCenters.first().second,
+            planeNormal = org.bukkit.util.Vector(normal[0], 0.0, normal[1]),
+            horizontalAxis = org.bukkit.util.Vector(horizontal[0], 0.0, horizontal[1]),
+            centers = indexedCenters.map { it.second },
+            maxDistance = DISCARD_HOVER_DISTANCE,
+            tileHalfWidth = WIDTH / 2.0,
+            verticalTolerance = DISCARD_HOVER_VERTICAL_TOLERANCE,
+        ) ?: return null
+        return indexedCenters[resolvedIndex].first
+    }
 
-                val closestPoint = origin.clone().add(direction.clone().multiply(along))
-                val distanceSquared = point.distanceSquared(closestPoint)
-                if (distanceSquared <= toleranceSquared) index to distanceSquared else null
-            }
-            ?.minByOrNull { it.second }
-            ?.first
-        previewTileForDiscard(playerUUID, hoveredIndex)
+
+    fun refreshDiscardHover(player: Player) = updateDiscardAim(player)
+
+    fun refreshActionButtons() = updateActionButtons()
+
+    fun revealHands(player: MahjongPlayerBase) = renderRevealedHands(player)
+    fun clickAimedTileForDiscard(player: Player): AimedTileClick? {
+        val playerUUID = player.uniqueId.toString()
+        val aimedIndex = findAimedTileIndex(player) ?: return null
+        val confirmed = selectedTileIndices[playerUUID] == aimedIndex
+        if (confirmed) {
+            previewTileForDiscard(playerUUID, null)
+        } else {
+            previewTileForDiscard(playerUUID, aimedIndex)
+        }
+        return AimedTileClick(aimedIndex, confirmed)
     }
 
     /** Preview only; the caller must use confirmTileForDiscard to discard. */
-    fun previewTileForDiscard(playerUUID: String, hoveredIndex: Int?) {
-        val displays = handOwnerDisplays[playerUUID]
-        val index = hoveredIndex?.takeIf { displays != null && it in displays.indices }
-        val currentSelected = selectedTileIndices[playerUUID]
+    fun updateDiscardAim(player: Player) {
+        val playerUUID = player.uniqueId.toString()
+        val seatIndex = game.seat.indexOfFirst { it.uuid == playerUUID }
+        if (seatIndex < 0) return
 
-        if (currentSelected == index) return
-
-        if (currentSelected != null) {
-            lowerTileAt(playerUUID, currentSelected)
+        val candidate = findAimedTileIndex(player)
+        val stabilizer = aimStabilizers.getOrPut(playerUUID) {
+            AimStabilizer(DISCARD_HOVER_STABILITY_MS)
         }
-        selectedTileIndices.remove(playerUUID)
-        unhighlightDiscards(playerUUID)
-
-        if (index == null) return
-
-        raiseTileAt(playerUUID, index)
-        selectedTileIndices[playerUUID] = index
-
-        val player = game.seat.find { it.uuid == playerUUID }
-        val tile = player?.hands?.getOrNull(index)
-        if (tile != null) highlightMatchingDiscards(playerUUID, tile)
+        val hoveredIndex = stabilizer.update(candidate, System.currentTimeMillis())
+        previewTileForDiscard(playerUUID, hoveredIndex)
     }
 
-    /** Returns true only when the right-click confirms the currently previewed tile. */
+    fun previewTileForDiscard(playerUUID: String, tileIndex: Int?) {
+        val gamePlayer = game.seat.find { it.uuid == playerUUID } ?: return
+        val current = selectedTileIndices[playerUUID]
+        if (current == tileIndex) return
+
+        if (current != null) {
+            shiftSingleTile(playerUUID, current, -RAISE_OFFSET)
+        }
+        if (tileIndex != null) {
+            shiftSingleTile(playerUUID, tileIndex, RAISE_OFFSET)
+            selectedTileIndices[playerUUID] = tileIndex
+            val tile = gamePlayer.hands.getOrNull(tileIndex)
+            if (tile != null) {
+                highlightDiscards(playerUUID, tile)
+            } else {
+                unhighlightDiscards(playerUUID)
+            }
+        } else {
+            selectedTileIndices.remove(playerUUID)
+            unhighlightDiscards(playerUUID)
+        }
+        updateHoverRemainingDisplay(playerUUID, tileIndex)
+        sendActionBarPreview(gamePlayer, tileIndex)
+    }
+
     fun confirmTileForDiscard(playerUUID: String, clickedIndex: Int): Boolean {
-        if (selectedTileIndices[playerUUID] != clickedIndex) {
-            previewTileForDiscard(playerUUID, clickedIndex)
-            return false
+        val currentlySelected = selectedTileIndices[playerUUID]
+        if (currentlySelected == clickedIndex) {
+            selectedTileIndices.remove(playerUUID)
+            shiftSingleTile(playerUUID, clickedIndex, -RAISE_OFFSET)
+            unhighlightDiscards(playerUUID)
+            updateHoverRemainingDisplay(playerUUID, null)
+            sendActionBarPreview(game.seat.first { it.uuid == playerUUID }, null)
+            return true
         }
-
-        previewTileForDiscard(playerUUID, null)
-        return true
+        previewTileForDiscard(playerUUID, clickedIndex)
+        return false
     }
 
-    /** Backwards-compatible entry point for callers that still select by click. */
-    fun selectTileForDiscard(playerUUID: String, clickedIndex: Int): Boolean =
-        confirmTileForDiscard(playerUUID, clickedIndex)
-
-    private fun highlightMatchingDiscards(playerUUID: String, tile: MahjongTile) {
-        unhighlightDiscards(playerUUID)
-        val bukkitPlayer = Bukkit.getPlayer(UUID.fromString(playerUUID)) ?: return
-        val glowing = MahjongPlayPlugin.instance.glowingEntities
-        val highlighted = highlightedDiscards.getOrPut(playerUUID) { mutableListOf() }
-        discardDisplays.values.flatten().forEach { display ->
-            if (display.tile == tile) {
-                display.entity?.let { e ->
-                    try {
-                        glowing.setGlowing(e, bukkitPlayer, ChatColor.YELLOW)
-                    } catch (_: ReflectiveOperationException) {}
-                }
-                highlighted += display
-            }
-        }
-    }
-
-    private fun unhighlightDiscards(playerUUID: String) {
-        val bukkitPlayer = Bukkit.getPlayer(UUID.fromString(playerUUID))
-        val glowing = MahjongPlayPlugin.instance.glowingEntities
-        highlightedDiscards[playerUUID]?.forEach { display ->
-            display.entity?.let { e ->
-                if (bukkitPlayer != null) {
-                    try {
-                        glowing.unsetGlowing(e, bukkitPlayer)
-                    } catch (_: ReflectiveOperationException) {}
-                }
-            }
-        }
-        highlightedDiscards.remove(playerUUID)
-    }
-
-    private fun raiseTileAt(playerUUID: String, index: Int) {
-        teleportTileY(handOwnerDisplays[playerUUID]?.getOrNull(index), RAISE_OFFSET)
-        // 不抬起牌背 (handDisplays)，避免其他玩家看到哪張牌被選中
-    }
-
-    private fun lowerTileAt(playerUUID: String, index: Int) {
-        teleportTileY(handOwnerDisplays[playerUUID]?.getOrNull(index), -RAISE_OFFSET)
-    }
-
-    private fun teleportTileY(display: MahjongTileDisplay?, deltaY: Double) {
-        display ?: return
+    private fun shiftSingleTile(playerUUID: String, tileIndex: Int, deltaY: Double) {
+        val displays = handOwnerDisplays[playerUUID] ?: return
+        val display = displays.getOrNull(tileIndex) ?: return
         display.entity?.let { e ->
-            val loc = e.location.clone()
-            loc.y += deltaY
-            e.teleport(loc)
-        }
-        display.interactionEntity?.let { e ->
+            e.teleportDuration = 4
             val loc = e.location.clone()
             loc.y += deltaY
             e.teleport(loc)
@@ -373,66 +527,140 @@ class BoardRenderer(
         spawnActionButtons(playerUUID, seatIndex, options)
     }
 
+    private fun estimateButtonWidth(option: ActionDisplayOption, scale: Float = 0.80f): Double {
+        if (option.tiles.isNotEmpty()) {
+            val tileW = TileConstants.WIDTH.toDouble()
+            val tileCount = option.tiles.size
+            val span = tileCount * tileW + (tileCount - 1) * 0.015
+            val labelW = if (option.label.isNotEmpty()) estimateTextWidth(option.label, scale) else 0.0
+            return maxOf(span + 0.08, labelW, 0.48)
+        }
+        return estimateTextWidth(option.label, scale)
+    }
+
+    private fun estimateTextWidth(label: String, scale: Float = 0.80f): Double {
+        var cjk = 0
+        var ascii = 0
+        for (cp in label.codePoints()) {
+            if (cp in 0x4E00..0x9FFF || cp in 0x3400..0x4DBF || cp in 0x3000..0x303F || cp in 0xFF00..0xFFEF) {
+                cjk++
+            } else {
+                ascii++
+            }
+        }
+        val rawWidth = (cjk * 0.28 + ascii * 0.15 + 0.20) * (scale / 0.80f)
+        return rawWidth.coerceAtLeast(0.52)
+    }
+
+    private fun calculateButtonOffsets(widths: List<Double>, gap: Double): List<Double> {
+        if (widths.isEmpty()) return emptyList()
+        val totalSpan = widths.sum() + (widths.size - 1) * gap
+        val offsets = mutableListOf<Double>()
+        var currentCenter = totalSpan / 2.0 - widths[0] / 2.0
+        offsets.add(currentCenter)
+        for (i in 1 until widths.size) {
+            currentCenter -= (widths[i - 1] / 2.0 + gap + widths[i] / 2.0)
+            offsets.add(currentCenter)
+        }
+        return offsets
+    }
+
     private fun spawnActionButtons(playerUUID: String, seatIndex: Int, options: List<ActionDisplayOption>) {
         clearActionOptions(playerUUID)
+        if (options.isEmpty()) return
 
         val ownerBukkit = Bukkit.getPlayer(UUID.fromString(playerUUID))
         val basis = actionButtonBasis(ownerBukkit, seatIndex)
-        val dirOffset = 0.85 + DEPTH + HEIGHT + 0.1
-        val actionY = surfaceY + HEIGHT + 0.65
+        val dirOffset = handRadialOffset + 0.05
+        val actionY = surfaceY + HEIGHT + 0.48
+        val buttonScale = 0.80f
+        val buttonGap = 0.18
 
-        val spacing = actionButtonSpacing(options)
-        val totalWidth = options.size * spacing
-        val startOffset = (totalWidth - spacing) / 2.0
+        val widths = options.map { estimateButtonWidth(it, buttonScale) }
+        val offsets = calculateButtonOffsets(widths, buttonGap)
 
         val displays = mutableListOf<ActionDisplay>()
 
         options.forEachIndexed { index, option ->
-            val offset = index * spacing
-            val x = tableCenter.x + basis[0] * dirOffset + basis[2] * (startOffset - offset)
-            val z = tableCenter.z + basis[1] * dirOffset + basis[3] * (startOffset - offset)
-            val loc = Location(world, x, actionY, z)
+            val lateralOffset = offsets[index]
+            val btnWidth = widths[index]
+            val x = tableCenter.x + basis[0] * dirOffset + basis[2] * lateralOffset
+            val z = tableCenter.z + basis[1] * dirOffset + basis[3] * lateralOffset
 
-            val textDisplay = world.spawnEntity(loc, EntityType.TEXT_DISPLAY) as TextDisplay
-            textDisplay.isPersistent = false
-            textDisplay.billboard = Display.Billboard.CENTER
-            textDisplay.backgroundColor = Color.fromARGB(60, 0, 0, 0)
-            textDisplay.brightness = Display.Brightness(15, 15)
-            textDisplay.text(
-                Component.text(option.label, option.color).decorate(TextDecoration.BOLD)
-            )
-            textDisplay.alignment = TextDisplay.TextAlignment.CENTER
-            textDisplay.setViewRange(0.3f)
-            textDisplay.setVisibleByDefault(false)
+            val textDisplay: TextDisplay? = if (option.label.isNotEmpty()) {
+                val textY = if (option.tiles.isNotEmpty()) actionY + 0.16 else actionY
+                val tLoc = Location(world, x, textY, z)
+                val td = world.spawnEntity(tLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+                td.isPersistent = false
+                td.addScoreboardTag(entityOwnershipTag)
+                td.billboard = Display.Billboard.CENTER
+                td.backgroundColor = Color.fromARGB(210, 16, 20, 28)
+                td.brightness = Display.Brightness(15, 15)
+                td.isShadowed = true
+                td.text(
+                    Component.text(" ${option.label} ", option.color).decorate(TextDecoration.BOLD)
+                )
+                td.alignment = TextDisplay.TextAlignment.CENTER
+                td.setViewRange(0.5f)
+                td.setVisibleByDefault(false)
 
-            val scaleMatrix = org.joml.Matrix4f().scale(0.6f)
-            textDisplay.setTransformationMatrix(scaleMatrix)
+                val scaleMatrix = org.joml.Matrix4f().scale(buttonScale)
+                td.setTransformationMatrix(scaleMatrix)
+                ownerBukkit?.let { p -> p.showEntity(MahjongPlayPlugin.instance, td) }
+                td
+            } else null
 
-            ownerBukkit?.showEntity(MahjongPlayPlugin.instance, textDisplay)
+            val tileDisplays = mutableListOf<MahjongTileDisplay>()
+            if (option.tiles.isNotEmpty()) {
+                val tileCount = option.tiles.size
+                val tileW = TileConstants.WIDTH.toDouble()
+                val tileGap = 0.015
+                val totalSpan = tileCount * tileW + (tileCount - 1) * tileGap
+                val startPerp = -totalSpan / 2.0 + tileW / 2.0
+                val tileYaw = seatYaw(seatIndex)
 
-            val interLoc = Location(world, x, actionY - 0.1, z)
-            val interaction = world.spawnEntity(interLoc, EntityType.INTERACTION) as org.bukkit.entity.Interaction
+                option.tiles.forEachIndexed { tIndex, tile ->
+                    val perpOffset = startPerp + tIndex * (tileW + tileGap)
+                    val tx = x + basis[2] * perpOffset
+                    val tz = z + basis[3] * perpOffset
+                    val tLoc = Location(world, tx, actionY, tz)
+
+                    val display = MahjongTileDisplay(tLoc, tile, TileFace.STANDING, tileYaw, interactive = false, ownershipTag = entityOwnershipTag)
+                    display.spawn()
+                    ownerBukkit?.let { display.showTo(it) }
+                    tileDisplays += display
+                }
+            }
+
+            val interactionWidth = btnWidth.toFloat().coerceIn(0.48f, 1.8f)
+            val interactionHeight = if (option.tiles.isNotEmpty() && option.label.isNotEmpty()) 0.45f else 0.35f
+            val interactionY = if (option.tiles.isNotEmpty() && option.label.isNotEmpty()) actionY - 0.08 else actionY - 0.16
+            val interaction = world.spawnEntity(
+                Location(world, x, interactionY, z),
+                EntityType.INTERACTION
+            ) as org.bukkit.entity.Interaction
             interaction.isPersistent = false
-            interaction.interactionWidth = 0.4f
-            interaction.interactionHeight = 0.4f
+            interaction.addScoreboardTag(entityOwnershipTag)
+            interaction.interactionWidth = interactionWidth
+            interaction.interactionHeight = interactionHeight
             interaction.isResponsive = false
 
             displays += ActionDisplay(
-                textDisplay,
-                interaction,
-                option.behavior,
-                option.data,
-                playerUUID,
-                option.subOptions,
-                spacing,
+                textDisplay = textDisplay,
+                tileDisplays = tileDisplays,
+                interaction = interaction,
+                behavior = option.behavior,
+                data = option.data,
+                ownerUUID = playerUUID,
+                subOptions = option.subOptions,
+                lateralOffset = lateralOffset,
             )
         }
 
         actionDisplays[playerUUID] = displays
     }
 
-    /** Re-align pending action options to the owning player's current position. */
-    fun refreshActionButtons() {
+    fun updateActionButtons() {
         actionDisplays.forEach { (playerUUID, displays) ->
             val gamePlayer = game.seat.find { it.uuid == playerUUID } ?: return@forEach
             val seatIndex = game.seat.indexOf(gamePlayer)
@@ -441,22 +669,41 @@ class BoardRenderer(
             val ownerBukkit = runCatching { Bukkit.getPlayer(UUID.fromString(playerUUID)) }.getOrNull()
                 ?: return@forEach
             val basis = actionButtonBasis(ownerBukkit, seatIndex)
-            val dirOffset = 0.85 + DEPTH + HEIGHT + 0.1
-            val actionY = surfaceY + HEIGHT + 0.65
-            val spacing = displays.first().layoutSpacing
-            val totalWidth = displays.size * spacing
-            val startOffset = (totalWidth - spacing) / 2.0
+            val dirOffset = handRadialOffset + 0.05
+            val actionY = surfaceY + HEIGHT + 0.48
 
-            displays.forEachIndexed { index, action ->
-                if (!action.textDisplay.isValid || !action.interaction.isValid) return@forEachIndexed
-                val offset = index * spacing
-                val x = tableCenter.x + basis[0] * dirOffset + basis[2] * (startOffset - offset)
-                val z = tableCenter.z + basis[1] * dirOffset + basis[3] * (startOffset - offset)
-                val loc = Location(world, x, actionY, z)
+            displays.forEach { action ->
+                if (!action.interaction.isValid) return@forEach
+                val x = tableCenter.x + basis[0] * dirOffset + basis[2] * action.lateralOffset
+                val z = tableCenter.z + basis[1] * dirOffset + basis[3] * action.lateralOffset
 
-                action.textDisplay.billboard = Display.Billboard.CENTER
-                action.textDisplay.teleport(loc)
-                action.interaction.teleport(Location(world, x, actionY - 0.1, z))
+                action.textDisplay?.let { td ->
+                    if (td.isValid) {
+                        td.billboard = Display.Billboard.CENTER
+                        val textY = if (action.tileDisplays.isNotEmpty()) actionY + 0.16 else actionY
+                        td.teleport(Location(world, x, textY, z))
+                    }
+                }
+
+                if (action.tileDisplays.isNotEmpty()) {
+                    val tileCount = action.tileDisplays.size
+                    val tileW = TileConstants.WIDTH.toDouble()
+                    val tileGap = 0.015
+                    val totalSpan = tileCount * tileW + (tileCount - 1) * tileGap
+                    val startPerp = -totalSpan / 2.0 + tileW / 2.0
+                    val tileYaw = seatYaw(seatIndex)
+
+                    action.tileDisplays.forEachIndexed { tIndex, tileDisplay ->
+                        val perpOffset = startPerp + tIndex * (tileW + tileGap)
+                        val tx = x + basis[2] * perpOffset
+                        val tz = z + basis[3] * perpOffset
+                        val tLoc = Location(world, tx, actionY, tz)
+                        tileDisplay.updatePosition(tLoc, tileYaw, TileFace.STANDING)
+                    }
+                }
+
+                val interactionY = if (action.tileDisplays.isNotEmpty() && action.textDisplay != null) actionY - 0.08 else actionY - 0.16
+                action.interaction.teleport(Location(world, x, interactionY, z))
             }
         }
     }
@@ -472,7 +719,8 @@ class BoardRenderer(
 
     fun clearActionOptions(playerUUID: String) {
         actionDisplays.remove(playerUUID)?.forEach { ad ->
-            ad.textDisplay.remove()
+            ad.textDisplay?.remove()
+            ad.tileDisplays.forEach { it.remove() }
             ad.interaction.remove()
         }
     }
@@ -518,7 +766,7 @@ class BoardRenderer(
                 val loc = Location(world, x, flatTileY, z)
                 leftEdge += WIDTH + PADDING
 
-                val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw)
+                val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
                 display.spawn()
                 showToAllViewers(display)
                 existing += display
@@ -540,7 +788,7 @@ class BoardRenderer(
                 val loc = Location(world, x, flatTileY, z)
                 leftEdge += WIDTH + PADDING
 
-                val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw)
+                val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
                 display.spawn()
                 showToAllViewers(display)
                 existing += display
@@ -578,7 +826,7 @@ class BoardRenderer(
 
             if (isAnkan) {
                 val tiles = fuuro.tiles
-                tiles.forEachIndexed { index, tile ->
+                tiles.forEach { tile ->
                     val stepSize = if (tileCount == 0) WIDTH / 2.0 + tileGap / 2.0
                         else if (lastWasClaimTile) (HEIGHT + WIDTH) / 2.0 + tileGap
                         else WIDTH.toDouble() + tileGap
@@ -587,8 +835,8 @@ class BoardRenderer(
                     curZ += perp[1] * stepSize
 
                     val loc = Location(world, curX, flatTileY, curZ)
-                    val face = if (index == 1 || index == 2) TileFace.FACE_UP else TileFace.FACE_DOWN
-                    val display = MahjongTileDisplay(loc, tile, face, yaw)
+                    // 台麻暗槓是公開宣告的牌組；四張正面朝上，避免牌背素材被誤認成未知散牌。
+                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
                     display.spawn()
                     showToAllViewers(display)
                     existing += display
@@ -635,7 +883,7 @@ class BoardRenderer(
                     val tileYaw = if (isClaimTile) yaw + 90f else yaw
 
                     val loc = Location(world, posX, flatTileY, posZ)
-                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, tileYaw)
+                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, tileYaw, ownershipTag = entityOwnershipTag)
                     display.spawn()
                     showToAllViewers(display)
                     existing += display
@@ -652,7 +900,7 @@ class BoardRenderer(
                     val kakanX = claimTileX - dir[0] * (WIDTH.toDouble() + tileGap)
                     val kakanZ = claimTileZ - dir[1] * (WIDTH.toDouble() + tileGap)
                     val loc = Location(world, kakanX, flatTileY, kakanZ)
-                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw + 90f)
+                    val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw + 90f, ownershipTag = entityOwnershipTag)
                     display.spawn()
                     showToAllViewers(display)
                     existing += display
@@ -679,59 +927,114 @@ class BoardRenderer(
             return
         }
 
-        if (existing.size >= flowers.size) return
+        val oldDisplays = existing.toList()
+        existing.clear()
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val flowerHalfTable = tableScale * 0.88
         val yaw = seatYaw(seatIndex)
-        val handDirOffset = 0.85 + DEPTH + HEIGHT
 
-        for (index in existing.size until flowers.size) {
-            val tile = flowers[index]
+        // 放置在手牌與牌牆中間的空隙（向手牌方向微調 2.4cm，徹底避開牌牆外緣）
+        val wallDist = wallDistance ?: 1.0125
+        val wallOuterEdge = wallDist + HEIGHT / 2.0
+        val handFrontEdge = handRadialOffset - DEPTH / 2.0
+        val flowerDirOffset = 1.180
+        val totalWidth = flowers.size * WIDTH + (flowers.size - 1) * PADDING
+        val startOffset = totalWidth / 2.0
+
+        // 正面朝上、字體正向面對玩家，在手牌與牌牆間居中水平左右肩並肩排列
+        flowers.forEachIndexed { index, tile ->
             val tileOffset = index * (WIDTH + PADDING)
-            val perpPos = flowerHalfTable - WIDTH / 2.0 - tileOffset
-            val x = tableCenter.x + dir[0] * handDirOffset - perp[0] * perpPos
-            val z = tableCenter.z + dir[1] * handDirOffset - perp[1] * perpPos
+            val perpOffset = startOffset - tileOffset - WIDTH / 2.0
+            val x = tableCenter.x + dir[0] * flowerDirOffset + perp[0] * perpOffset
+            val z = tableCenter.z + dir[1] * flowerDirOffset + perp[1] * perpOffset
             val loc = Location(world, x, flatTileY, z)
 
-            val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw)
+            val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
             display.spawn()
             showToAllViewers(display)
             existing += display
         }
+
+        oldDisplays.forEach { it.remove() }
     }
 
-    private fun spawnBotNameTags() {
-        clearBotNameTags()
-        game.seat.forEachIndexed { seatIndex, player ->
-            if (player !is MahjongBot) return@forEachIndexed
+    fun updateSeatScoreDisplays() {
+        spawnSeatScoreDisplays()
+    }
 
+    private fun spawnSeatScoreDisplays() {
+        clearSeatScoreDisplays()
+        if (game.seat.isEmpty()) return
+
+        game.seat.forEachIndexed { seatIndex, player ->
             val dir = seatDirection(seatIndex)
-            val nameTagDistance = 3.2
-            val x = tableCenter.x + dir[0] * nameTagDistance
-            val z = tableCenter.z + dir[1] * nameTagDistance
-            val loc = Location(world, x, surfaceY + 0.5, z)
+            val distance = 2.85
+            val x = tableCenter.x + dir[0] * distance
+            val z = tableCenter.z + dir[1] * distance
+            val loc = Location(world, x, surfaceY + 1.25, z)
 
             val textDisplay = world.spawnEntity(loc, EntityType.TEXT_DISPLAY) as TextDisplay
             textDisplay.isPersistent = false
-            textDisplay.text(
-                Component.text("\uD83E\uDD16 ", NamedTextColor.GRAY)
-                    .append(Component.text(player.displayName, NamedTextColor.GOLD))
-            )
+            textDisplay.addScoreboardTag(entityOwnershipTag)
             textDisplay.billboard = Display.Billboard.CENTER
-            textDisplay.backgroundColor = Color.fromARGB(160, 0, 0, 0)
+            textDisplay.backgroundColor = Color.fromARGB(195, 10, 16, 26)
             textDisplay.brightness = Display.Brightness(15, 15)
             textDisplay.isSeeThrough = false
-            textDisplay.setViewRange(0.8f)
+            textDisplay.isShadowed = true
+            textDisplay.setViewRange(0.85f)
+            textDisplay.alignment = TextDisplay.TextAlignment.CENTER
 
-            botNameDisplays += textDisplay
+            val scaleMatrix = org.joml.Matrix4f().scale(0.80f)
+            textDisplay.setTransformationMatrix(scaleMatrix)
+
+            val seatWind = Wind.entries.getOrNull(seatIndex) ?: Wind.EAST
+            val pts = player.points
+            val ptsText = if (pts > 0) "+$pts" else "$pts"
+            val ptsColor = when {
+                pts > 0 -> NamedTextColor.GREEN
+                pts < 0 -> NamedTextColor.RED
+                else -> NamedTextColor.WHITE
+            }
+
+            val headerComponent = when {
+                player is MahjongBot -> {
+                    val diffColor = when (player.difficulty) {
+                        BotDifficulty.LOW -> NamedTextColor.GRAY
+                        BotDifficulty.MEDIUM -> NamedTextColor.YELLOW
+                        BotDifficulty.HIGH -> NamedTextColor.LIGHT_PURPLE
+                    }
+                    Component.text("【${seatWind.displayName}家】", NamedTextColor.AQUA)
+                        .append(Component.text("🤖 ${player.displayName}", NamedTextColor.GOLD))
+                        .append(Component.text(" [${player.difficulty.displayName}]", diffColor))
+                }
+                player is MahjongPlayer && player.isBotTakeover -> {
+                    val diffColor = when (player.botDifficulty) {
+                        BotDifficulty.LOW -> NamedTextColor.GRAY
+                        BotDifficulty.MEDIUM -> NamedTextColor.YELLOW
+                        BotDifficulty.HIGH -> NamedTextColor.LIGHT_PURPLE
+                    }
+                    Component.text("【${seatWind.displayName}家】", NamedTextColor.AQUA)
+                        .append(Component.text("🤖 ${player.rawDisplayName} [託管]", NamedTextColor.GOLD))
+                        .append(Component.text(" [${player.botDifficulty.displayName}]", diffColor))
+                }
+                else -> {
+                    Component.text("【${seatWind.displayName}家】", NamedTextColor.AQUA)
+                        .append(Component.text(player.displayName, NamedTextColor.WHITE))
+                }
+            }
+
+            val scoreComponent = Component.text("積分: ", NamedTextColor.GRAY)
+                .append(Component.text(ptsText, ptsColor).decorate(TextDecoration.BOLD))
+
+            textDisplay.text(headerComponent.append(Component.newline()).append(scoreComponent))
+            seatScoreDisplays += textDisplay
         }
     }
 
-    private fun clearBotNameTags() {
-        botNameDisplays.forEach { it.remove() }
-        botNameDisplays.clear()
+    private fun clearSeatScoreDisplays() {
+        seatScoreDisplays.forEach { it.remove() }
+        seatScoreDisplays.clear()
     }
 
     private fun showToAllViewers(display: MahjongTileDisplay) {
@@ -744,7 +1047,89 @@ class BoardRenderer(
             .forEach { display.showTo(it) }
     }
 
-    private fun updateVisibility(player: MahjongPlayerBase) {
+    /**
+     * Reconcile this renderer's per-player visibility after a join/rejoin.
+     * Display entities are deliberately hidden by default, so showing only
+     * newly-created entities is insufficient: a spectator joining mid-round
+     * would otherwise see an empty wall and discard area.  Keep public
+     * displays public, while applying the same hand-front policy used during
+     * normal rendering.
+     */
+    fun syncPlayerVisibility(viewer: Player) {
+        if (!viewer.isOnline) return
+
+        wallRenderer.showPublicDisplaysTo(viewer)
+        discardDisplays.values.flatten().forEach { it.showTo(viewer) }
+        fuuroDisplays.values.flatten().forEach { it.showTo(viewer) }
+        flowerDisplays.values.flatten().forEach { it.showTo(viewer) }
+        revealedHandDisplays.values.flatten().forEach { it.showTo(viewer) }
+        seatScoreDisplays.forEach { display ->
+            runCatching { viewer.showEntity(MahjongPlayPlugin.instance, display) }
+        }
+        roundSettlementDisplay?.let { display ->
+            runCatching { viewer.showEntity(MahjongPlayPlugin.instance, display) }
+        }
+        floatingCenterDisplay?.showTo(viewer)
+
+        val viewerUUID = viewer.uniqueId.toString()
+        val isParticipant = game.players.any { it.uuid == viewerUUID }
+        val isSpectator = !isParticipant && game.rule.spectate
+        game.seat.forEach { seatPlayer ->
+            val isOwner = seatPlayer.uuid == viewerUUID
+            handDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
+                if (isOwner) display.hideTo(viewer) else display.showTo(viewer)
+            }
+            handOwnerDisplays[seatPlayer.uuid].orEmpty().forEach { display ->
+                val canSeeFront = isOwner || (isSpectator && game.rule.spectatorSeeHands)
+                if (canSeeFront) display.showTo(viewer) else display.hideTo(viewer)
+            }
+        }
+
+        // Action labels/tiles are private prompts.  The Interaction hitboxes
+        // remain server-side and are validated by owner UUID in the listener.
+        actionDisplays[viewerUUID].orEmpty().forEach { action ->
+            action.textDisplay?.let { display ->
+                runCatching { viewer.showEntity(MahjongPlayPlugin.instance, display) }
+            }
+            action.tileDisplays.forEach { it.showTo(viewer) }
+        }
+    }
+
+    private fun drawFlightTarget(event: TileDrawEvent): DrawFlightTarget {
+        val player = game.seat.find { it.uuid == event.playerUUID }
+            ?: return DrawFlightTarget(Location(world, tableCenter.x, standingTileY, tableCenter.z), 0f)
+        val seatIndex = game.seat.indexOf(player)
+        if (seatIndex < 0) return DrawFlightTarget(Location(world, tableCenter.x, standingTileY, tableCenter.z), 0f)
+
+        val dir = seatDirection(seatIndex)
+        val perp = seatPerpendicular(seatIndex)
+        val yaw = seatYaw(seatIndex)
+
+        // 摸到花牌直接順暢飛往手牌前方空隙的花牌區平鋪定位
+        if (event.tile.isFlower) {
+            val flowerDirOffset = 1.180
+            val flowerIndex = player.flowerTiles.size
+            val totalWidth = (flowerIndex + 1) * WIDTH + flowerIndex * PADDING
+            val startOffset = totalWidth / 2.0
+            val perpOffset = startOffset - flowerIndex * (WIDTH + PADDING) - WIDTH / 2.0
+            val x = tableCenter.x + dir[0] * flowerDirOffset + perp[0] * perpOffset
+            val z = tableCenter.z + dir[1] * flowerDirOffset + perp[1] * perpOffset
+            return DrawFlightTarget(Location(world, x, flatTileY, z), yaw, TileFace.FACE_UP)
+        }
+
+        val tileCount = event.handSizeBeforeDraw + 1
+        val totalWidth = tileCount * WIDTH + (tileCount - 1) * HAND_GAP
+        val startOffset = totalWidth / 2.0 + HAND_LEFT_OFFSET
+        val isDrawnTile = player.justDrewTile &&
+            tileCount == 17 - player.fuuroList.size * 3 &&
+            event.reason != DrawReason.INITIAL_DEAL
+        val tileOffset = (tileCount - 1) * (WIDTH + HAND_GAP) + if (isDrawnTile) DRAWN_TILE_GAP else 0.0
+        val x = tableCenter.x + dir[0] * handRadialOffset + perp[0] * (startOffset - tileOffset)
+        val z = tableCenter.z + dir[1] * handRadialOffset + perp[1] * (startOffset - tileOffset)
+        return DrawFlightTarget(Location(world, x, standingTileY, z), yaw, TileFace.STANDING)
+    }
+
+    fun updateVisibility(player: MahjongPlayerBase) {
         val backDisplays = handDisplays[player.uuid] ?: return
         val ownerOnlyDisplays = handOwnerDisplays[player.uuid] ?: return
         val ownerBukkit = Bukkit.getPlayer(UUID.fromString(player.uuid))
@@ -754,23 +1139,33 @@ class BoardRenderer(
             .mapNotNull { Bukkit.getPlayer(UUID.fromString(it.uuid)) }
 
         val spectators = if (game.rule.spectate) {
-            Bukkit.getOnlinePlayers().filter { op -> game.players.none { it.uuid == op.uniqueId.toString() } }
+            Bukkit.getOnlinePlayers().filter { op ->
+                game.players.none { it.uuid == op.uniqueId.toString() }
+            }
         } else emptyList()
 
         backDisplays.forEach { display ->
-            if (ownerBukkit != null) display.hideTo(ownerBukkit)
+            ownerBukkit?.let { display.hideTo(it) }
             otherBukkitPlayers.forEach { display.showTo(it) }
-            spectators.forEach { display.showTo(it) }
+            if (game.rule.spectatorSeeHands) {
+                spectators.forEach { display.hideTo(it) }
+            } else {
+                spectators.forEach { display.showTo(it) }
+            }
         }
 
         ownerOnlyDisplays.forEach { display ->
-            if (ownerBukkit != null) display.showTo(ownerBukkit)
+            ownerBukkit?.let { display.showTo(it) }
             otherBukkitPlayers.forEach { display.hideTo(it) }
-            spectators.forEach { if (game.rule.spectate) display.showTo(it) else display.hideTo(it) }
+            if (game.rule.spectatorSeeHands) {
+                spectators.forEach { display.showTo(it) }
+            } else {
+                spectators.forEach { display.hideTo(it) }
+            }
         }
     }
 
-    fun revealHands(player: MahjongPlayerBase) {
+    fun renderRevealedHands(player: MahjongPlayerBase) {
         val seatIndex = game.seat.indexOf(player)
         if (seatIndex < 0) return
 
@@ -781,44 +1176,201 @@ class BoardRenderer(
 
         val dir = seatDirection(seatIndex)
         val perp = seatPerpendicular(seatIndex)
-        val dirOffset = 0.85 + DEPTH + HEIGHT
+        val dirOffset = handRadialOffset
         val yaw = seatYaw(seatIndex)
         val currentHands = player.hands.toList()
         val tileCount = currentHands.size
-        val totalWidth = tileCount * WIDTH + (tileCount - 1) * PADDING
-        val startOffset = totalWidth / 2.0 - HAND_RIGHT_OFFSET
+        val totalWidth = tileCount * WIDTH + (tileCount - 1) * HAND_GAP
+        val startOffset = totalWidth / 2.0 + HAND_LEFT_OFFSET
 
         val revealed = mutableListOf<MahjongTileDisplay>()
 
         currentHands.forEachIndexed { index, tile ->
-            val tileOffset = index * (WIDTH + PADDING)
+            val tileOffset = index * (WIDTH + HAND_GAP)
             val x = tableCenter.x + dir[0] * dirOffset + perp[0] * (startOffset - tileOffset)
             val z = tableCenter.z + dir[1] * dirOffset + perp[1] * (startOffset - tileOffset)
             val loc = Location(world, x, flatTileY, z)
 
-            val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw)
+            val display = MahjongTileDisplay(loc, tile, TileFace.FACE_UP, yaw, ownershipTag = entityOwnershipTag)
             display.spawn()
             showToAllViewers(display)
             revealed += display
         }
 
-        handDisplays[player.uuid] = revealed.toMutableList()
+        revealedHandDisplays[player.uuid] = revealed
+    }
+
+    private val revealedHandDisplays = ConcurrentHashMap<String, MutableList<MahjongTileDisplay>>()
+
+    fun clearAllDisplays() {
+        roundSettlementDisplay?.remove()
+        roundSettlementDisplay = null
+        openingDiceRenderer.cancelAndClear()
+        seatWindDrawRenderer.cancelAndClear()
+        wallRenderer.cancelAndClear()
+        game.seat.forEach { unhighlightDiscards(it.uuid) }
+        handDisplays.values.flatten().forEach { it.remove() }
+        handDisplays.clear()
+        handOwnerDisplays.values.flatten().forEach { it.remove() }
+        handOwnerDisplays.clear()
+        revealedHandDisplays.values.flatten().forEach { it.remove() }
+        revealedHandDisplays.clear()
+        selectedTileIndices.clear()
+        aimStabilizers.clear()
+        discardDisplays.values.flatten().forEach { it.remove() }
+        discardDisplays.clear()
+        fuuroDisplays.values.flatten().forEach { it.remove() }
+        fuuroDisplays.clear()
+        flowerDisplays.values.flatten().forEach { it.remove() }
+        flowerDisplays.clear()
+        actionDisplays.values.flatten().forEach { ad ->
+            ad.textDisplay?.remove()
+            ad.tileDisplays.forEach { it.remove() }
+            ad.interaction.remove()
+        }
+        actionDisplays.clear()
+        hoverRemainingDisplays.values.forEach { it.remove() }
+        hoverRemainingDisplays.clear()
+        clearFloatingCenterTile()
+        clearSeatScoreDisplays()
+        removeOrphanedUnknownBackDisplays()
+    }
+
+    /**
+     * Hand backs are the only displays that use the question-mark model, and
+     * they must always be tracked by [handDisplays]. A plugin reload or an
+     * interrupted render can otherwise leave an untracked ItemDisplay lying
+     * on the table indefinitely. Keep tracked, standing hand backs; remove
+     * only untracked question-mark displays inside this table's bounds.
+     */
+    private fun removeOrphanedUnknownBackDisplays() {
+        val trackedIds = handDisplays.values
+            .asSequence()
+            .flatten()
+            .mapNotNull { it.entity?.uniqueId }
+            .toSet()
+        val unknownModelData = MahjongModelData.TILE_BASE + MahjongTile.UNKNOWN.code
+        val scanRadius = tableScale * 2.25 + 0.5
+        var removed = 0
+
+        world.getNearbyEntities(tableCenter, scanRadius, 2.0, scanRadius)
+            .filterIsInstance<ItemDisplay>()
+            .filter { display ->
+                display.uniqueId !in trackedIds &&
+                    !wallRenderer.isTrackedDisplay(display.uniqueId) &&
+                    !openingDiceRenderer.isTrackedDisplay(display.uniqueId) &&
+                    // Only reclaim displays that this table created.  The
+                    // UNKNOWN model-data value is shared data and cannot be
+                    // used as an ownership test; without this tag check a
+                    // nearby table/other plugin could lose its hand backs.
+                    display.scoreboardTags.contains(entityOwnershipTag) &&
+                    display.itemStack.itemMeta.customModelData == unknownModelData
+            }
+            .forEach {
+                it.remove()
+                removed++
+            }
+
+        if (removed > 0) {
+            MahjongPlayPlugin.instance.logger.info("Removed $removed orphaned hidden-hand display(s) near a mahjong table.")
+        }
+    }
+
+    fun clearHoverRemainingFor(playerUUID: String) {
+        hoverRemainingDisplays.remove(playerUUID)?.remove()
+    }
+
+    private fun updateHoverRemainingDisplay(playerUUID: String, tileIndex: Int?) {
+        val oldDisplay = hoverRemainingDisplays.remove(playerUUID)
+        oldDisplay?.remove()
+
+        if (tileIndex == null) return
+        val gamePlayer = game.seat.find { it.uuid == playerUUID } ?: return
+        val tile = gamePlayer.hands.getOrNull(tileIndex) ?: return
+        val displays = handOwnerDisplays[playerUUID] ?: return
+        val tileDisplay = displays.getOrNull(tileIndex) ?: return
+        val tileEntity = tileDisplay.entity ?: return
+
+        val ownerBukkit = runCatching { Bukkit.getPlayer(UUID.fromString(playerUUID)) }.getOrNull() ?: return
+        val rem = TileCounter.countRemainingUnseenTiles(game, gamePlayer, tile)
+        val remColor = when (rem) {
+            0 -> NamedTextColor.RED
+            1 -> NamedTextColor.YELLOW
+            else -> NamedTextColor.GREEN
+        }
+
+        val tileLoc = tileEntity.location
+        // 浮字顯示於手牌正上方約 8 公分處
+        val badgeLoc = Location(world, tileLoc.x, tileLoc.y + HEIGHT + 0.08, tileLoc.z)
+
+        val textDisplay = world.spawnEntity(badgeLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+        textDisplay.isPersistent = false
+        textDisplay.addScoreboardTag(entityOwnershipTag)
+        textDisplay.billboard = Display.Billboard.CENTER
+        textDisplay.backgroundColor = Color.fromARGB(210, 16, 20, 28)
+        textDisplay.brightness = Display.Brightness(15, 15)
+        textDisplay.isShadowed = true
+        textDisplay.text(
+            Component.text("餘 ", NamedTextColor.GRAY)
+                .append(Component.text("$rem", remColor).decorate(TextDecoration.BOLD))
+        )
+        textDisplay.alignment = TextDisplay.TextAlignment.CENTER
+        textDisplay.setViewRange(0.5f)
+        textDisplay.setVisibleByDefault(false)
+
+        val scaleMatrix = org.joml.Matrix4f().scale(0.65f)
+        textDisplay.setTransformationMatrix(scaleMatrix)
+        ownerBukkit.showEntity(MahjongPlayPlugin.instance, textDisplay)
+
+        hoverRemainingDisplays[playerUUID] = textDisplay
+    }
+
+    private fun sendActionBarPreview(player: MahjongPlayerBase, tileIndex: Int?) {
+        val bukkitPlayer = Bukkit.getPlayer(UUID.fromString(player.uuid)) ?: return
+        if (tileIndex == null) {
+            bukkitPlayer.sendActionBar(Component.empty())
+            return
+        }
+        val tile = player.hands.getOrNull(tileIndex) ?: return
+        val rem = TileCounter.countRemainingUnseenTiles(game, player, tile)
+        val remColor = when (rem) {
+            0 -> NamedTextColor.RED
+            1 -> NamedTextColor.YELLOW
+            else -> NamedTextColor.GREEN
+        }
+        bukkitPlayer.sendActionBar(
+            Component.text("已選取：", NamedTextColor.GRAY)
+                .append(Component.text(tile.displayName, NamedTextColor.GOLD))
+                .append(Component.text(" 【餘 ", NamedTextColor.DARK_GRAY))
+                .append(Component.text("$rem", remColor).decorate(TextDecoration.BOLD))
+                .append(Component.text("】", NamedTextColor.DARK_GRAY))
+                .append(Component.text("（再次點擊出牌）", NamedTextColor.YELLOW))
+        )
     }
 
     private fun spawnFloatingCenterTile(tile: MahjongTile) {
         clearFloatingCenterTile()
-
-        val floatY = surfaceY + 0.6
-        val loc = Location(world, tableCenter.x, floatY, tableCenter.z)
-        val display = MahjongTileDisplay(loc, tile, TileFace.STANDING, 0f)
+        // 放大中央出牌提示並設置向四周玩家面向 (BILLBOARD CENTER)，高度稍作提升
+        val loc = Location(world, tableCenter.x, surfaceY + HEIGHT + 0.45, tableCenter.z)
+        val display = MahjongTileDisplay(loc, tile, TileFace.STANDING, 0f, ownershipTag = entityOwnershipTag)
         display.spawn()
         display.entity?.let { entity ->
-            val matrix = org.joml.Matrix4f()
-            matrix.scale(0.3f)
+            val matrix = org.joml.Matrix4f().scale(0.42f)
             entity.setTransformationMatrix(matrix)
             entity.billboard = Display.Billboard.CENTER
         }
         showToAllViewers(display)
+
+        // 若有玩家正在 Shift 俯瞰牌桌中央捨牌區，將此中央提示懸浮牌對其隱藏，避免遮擋視線
+        runCatching { MahjongPlayPlugin.instance.tableManager }.getOrNull()?.let { mgr ->
+            game.realPlayers.forEach { mjPlayer ->
+                val uuid = runCatching { UUID.fromString(mjPlayer.uuid) }.getOrNull() ?: return@forEach
+                if (mgr.isPlayerInspectingCenter(uuid)) {
+                    Bukkit.getPlayer(uuid)?.let { display.hideTo(it) }
+                }
+            }
+        }
+
         floatingCenterDisplay = display
     }
 
@@ -827,21 +1379,47 @@ class BoardRenderer(
         floatingCenterDisplay = null
     }
 
-    fun clearAllDisplays() {
-        game.seat.forEach { unhighlightDiscards(it.uuid) }
-        handDisplays.values.flatten().forEach { it.remove() }
-        handDisplays.clear()
-        handOwnerDisplays.values.flatten().forEach { it.remove() }
-        handOwnerDisplays.clear()
-        discardDisplays.values.flatten().forEach { it.remove() }
-        discardDisplays.clear()
-        fuuroDisplays.values.flatten().forEach { it.remove() }
-        fuuroDisplays.clear()
-        flowerDisplays.values.flatten().forEach { it.remove() }
-        flowerDisplays.clear()
-        actionDisplays.values.flatten().forEach { ad -> ad.textDisplay.remove(); ad.interaction.remove() }
-        actionDisplays.clear()
-        clearFloatingCenterTile()
-        clearBotNameTags()
+    fun hideFloatingCenterTileFor(player: Player) {
+        floatingCenterDisplay?.hideTo(player)
+    }
+
+    fun showFloatingCenterTileFor(player: Player) {
+        floatingCenterDisplay?.showTo(player)
+    }
+
+    fun handleSeatWindClick(player: org.bukkit.entity.Player, entityUUID: java.util.UUID): Boolean =
+        seatWindDrawRenderer.handleInteractionClick(player, entityUUID)
+
+    fun isSeatWindInteraction(entityUUID: java.util.UUID): Boolean =
+        seatWindDrawRenderer.isWindTileInteraction(entityUUID)
+
+    fun highlightDiscards(playerUUID: String, tile: MahjongTile) {
+        unhighlightDiscards(playerUUID)
+        val matched = mutableListOf<MahjongTileDisplay>()
+        matched += discardDisplays.values.flatten().filter { it.tile == tile }
+        handOwnerDisplays[playerUUID]?.filter { it.tile == tile }?.let { matched += it }
+        matched += fuuroDisplays.values.flatten().filter { it.tile == tile }
+
+        val player = Bukkit.getPlayer(UUID.fromString(playerUUID)) ?: return
+        matched.forEach { display ->
+            display.entity?.let {
+                runCatching {
+                    MahjongPlayPlugin.instance.glowingEntities.setGlowing(it, player, org.bukkit.ChatColor.GOLD)
+                }
+            }
+        }
+        highlightedDiscards[playerUUID] = matched
+    }
+
+    fun unhighlightDiscards(playerUUID: String) {
+        val highlighted = highlightedDiscards.remove(playerUUID) ?: return
+        val player = Bukkit.getPlayer(UUID.fromString(playerUUID)) ?: return
+        highlighted.forEach { display ->
+            display.entity?.let {
+                runCatching {
+                    MahjongPlayPlugin.instance.glowingEntities.unsetGlowing(it, player)
+                }
+            }
+        }
     }
 }

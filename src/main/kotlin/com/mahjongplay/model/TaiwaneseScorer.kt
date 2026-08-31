@@ -179,7 +179,9 @@ object TaiwaneseScorer {
             hands = concealedTiles,
             fuuroList = fuuroList.map { it.isOpen to it.tiles },
             tai = totalTai,
-            score = basePoints + totalTai * pointsPerTai,
+            score = (basePoints.toLong() + totalTai.toLong() * pointsPerTai)
+                .coerceIn(0L, Int.MAX_VALUE.toLong())
+                .toInt(),
             isTsumo = isTsumo,
         )
     }

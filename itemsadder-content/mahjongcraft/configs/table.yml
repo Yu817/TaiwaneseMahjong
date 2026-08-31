@@ -9,3 +9,11 @@ items:
       model_id: 900044
       generate: false
       model_path: item/mahjong_table
+
+  mahjong_dice_white:
+    display_name: "白色骰子"
+    resource:
+      material: PAPER
+      model_id: 900046
+      generate: false
+      model_path: item/mahjong_dice_white

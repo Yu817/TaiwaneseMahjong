@@ -5,6 +5,8 @@ import com.mahjongplay.display.MahjongTableDisplay
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
+import org.bukkit.Bukkit
+import com.mahjongplay.MahjongPlayPlugin
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
@@ -13,8 +15,22 @@ import org.bukkit.entity.EntityType
 import org.bukkit.entity.Interaction
 import org.bukkit.entity.Player
 import org.bukkit.entity.TextDisplay
+import org.bukkit.entity.Entity
 import java.util.UUID
 import kotlin.math.hypot
+
+/**
+ * Stable ownership marker for every entity belonging to one table.
+ *
+ * The table renderer is rebuilt after a plugin reload, so an in-memory UUID
+ * registry alone cannot clean up stale entities.  Deriving the marker from
+ * the persisted table location lets a new renderer reclaim only its own
+ * entities while leaving nearby server/plugin displays untouched.
+ */
+internal fun mahjongTableEntityTag(center: Location): String {
+    val key = "${center.world.uid}:${center.blockX}:${center.blockY}:${center.blockZ}"
+    return "taiwanese_mahjong_table_" + UUID.nameUUIDFromBytes(key.toByteArray()).toString().replace("-", "")
+}
 
 // In the current Minecraft client TextDisplay glyphs render below the entity
 // origin. Place each Interaction box on the visible glyph row and keep a gap
@@ -38,10 +54,26 @@ class MahjongTable(
     val tableScale: Float = MahjongTableDisplay.DEFAULT_SCALE,
 ) {
 
+    private val entityOwnershipTag = mahjongTableEntityTag(center)
+    private val trackedEntityIds = mutableSetOf<UUID>()
+
     companion object {
         // Chairs and their invisible support blocks are two blocks from the
         // table center. Players must be teleported onto those supports.
         const val CHAIR_DISTANCE = 2.0
+
+        fun obstructedPlacementBlocks(center: Location, chairsEnabled: Boolean): List<Location> {
+            val offsets = buildList {
+                for (dx in -1..1) for (dz in -1..1) add(dx to dz)
+                if (chairsEnabled) addAll(listOf(2 to 0, 0 to -2, -2 to 0, 0 to 2))
+            }
+            return offsets
+                .distinct()
+                .map { (dx, dz) ->
+                    Location(center.world, (center.blockX + dx).toDouble(), center.blockY.toDouble(), (center.blockZ + dz).toDouble())
+                }
+                .filter { it.block.type != Material.AIR }
+        }
     }
 
     private val placedBlocks = mutableListOf<Location>()
@@ -101,9 +133,14 @@ class MahjongTable(
                 && seatChairDisplays.all { it.entity?.isValid == true }
             )
         if (hasTableDisplay && hasJoinDisplay && hasJoinInteraction && hasSeatChairs) {
+            tableDisplay?.entity?.let(::rememberOwnedEntity)
+            listOfNotNull(joinTextDisplay, joinInteraction).forEach(::rememberOwnedEntity)
             tableDisplay?.normalizeOrientation()
             if (chairsEnabled) {
-                seatChairDisplays.forEach { it.spawn() }
+                seatChairDisplays.forEach {
+                    it.spawn()
+                    it.entity?.let(::rememberOwnedEntity)
+                }
             } else {
                 removeSeatSupportBlocks()
                 removeSeatChairs()
@@ -121,11 +158,12 @@ class MahjongTable(
             removeSeatSupportBlocks()
             removeSeatChairs()
         }
-        clearLegacyTableSurface()
-
         if (!hasTableDisplay) {
             tableDisplay?.remove()
-            tableDisplay = MahjongTableDisplay(center, scale = tableScale).also { it.spawn() }
+            tableDisplay = MahjongTableDisplay(center, scale = tableScale, ownershipTag = entityOwnershipTag).also {
+                it.spawn()
+                it.entity?.let(::rememberOwnedEntity)
+            }
         }
 
         if (!hasJoinDisplay || !hasJoinInteraction) {
@@ -182,11 +220,14 @@ class MahjongTable(
                     center.blockY + MahjongChairDisplay.ORIGIN_Y_OFFSET,
                     cz + seat.dz + 0.5,
                 )
-                seatChairDisplays += MahjongChairDisplay(chairLocation, seat.chairYaw)
+                seatChairDisplays += MahjongChairDisplay(chairLocation, seat.chairYaw, entityOwnershipTag)
             }
         }
 
-        seatChairDisplays.forEach { it.spawn() }
+        seatChairDisplays.forEach {
+            it.spawn()
+            it.entity?.let(::rememberOwnedEntity)
+        }
     }
 
     /**
@@ -319,25 +360,11 @@ class MahjongTable(
     }
 
     private fun setTrackedBlock(location: Location, material: Material) {
-        location.block.type = material
+        val block = location.block
+        if (block.type != Material.AIR && block.type != material) return
+        block.type = material
         if (placedBlocks.none { sameBlock(it, location) }) {
             placedBlocks += location
-        }
-    }
-
-    private fun clearLegacyTableSurface() {
-        val world = center.world
-        val cx = center.blockX
-        val cy = center.blockY + 1
-        val cz = center.blockZ
-
-        for (dx in -1..1) {
-            for (dz in -1..1) {
-                val surface = world.getBlockAt(cx + dx, cy, cz + dz)
-                if (surface.type == Material.GREEN_CARPET || surface.type == Material.LIGHT_BLUE_CARPET) {
-                    surface.type = Material.AIR
-                }
-            }
         }
     }
 
@@ -352,6 +379,7 @@ class MahjongTable(
         val displayLoc = Location(world, center.x, center.blockY + 2.5, center.z)
 
         val textDisplay = world.spawnEntity(displayLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+        rememberOwnedEntity(textDisplay)
         textDisplay.isPersistent = false
         textDisplay.billboard = Display.Billboard.CENTER
         textDisplay.backgroundColor = mainDisplayBackground()
@@ -363,6 +391,7 @@ class MahjongTable(
 
         val interactionLoc = Location(world, center.x, center.blockY + 2.55, center.z)
         val interaction = world.spawnEntity(interactionLoc, EntityType.INTERACTION) as Interaction
+        rememberOwnedEntity(interaction)
         interaction.isPersistent = false
         interaction.interactionWidth = 2.0f
         interaction.interactionHeight = 0.65f
@@ -374,66 +403,74 @@ class MahjongTable(
 
     private fun spawnActionButtons() {
         val world = center.world
-        val btnY = center.blockY + 1.8
 
-        val readyLoc = actionButtonLocation(btnY, -0.5)
+        // 垂直置中排列於牌桌正中心軸 (center.x, center.z)，配合 Billboard.CENTER
+        // 讓 360 度所有方向的玩家看過去皆為即時面向自己、絕不重疊歪斜
+        val readyY = center.blockY + 2.10
+        val readyLoc = Location(world, center.x, readyY, center.z)
         val readyTd = world.spawnEntity(readyLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+        rememberOwnedEntity(readyTd)
         readyTd.isPersistent = false
         readyTd.billboard = Display.Billboard.CENTER
-        readyTd.backgroundColor = Color.fromARGB(160, 0, 80, 0)
+        readyTd.backgroundColor = Color.fromARGB(175, 0, 90, 0)
         readyTd.brightness = Display.Brightness(15, 15)
         readyTd.isSeeThrough = false
-        readyTd.setViewRange(0.4f)
+        readyTd.setViewRange(0.6f)
         readyTd.alignment = TextDisplay.TextAlignment.CENTER
-        readyTd.text(Component.text(" ✓ 準備 ", NamedTextColor.GREEN))
+        readyTd.text(Component.text(" ✓ 準備 ", NamedTextColor.GREEN).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
         readyTextDisplay = readyTd
 
-        val readyIntLoc = actionButtonLocation(btnY - 0.15, -0.5)
+        val readyIntLoc = Location(world, center.x, readyY - 0.15, center.z)
         val readyInt = world.spawnEntity(readyIntLoc, EntityType.INTERACTION) as Interaction
+        rememberOwnedEntity(readyInt)
         readyInt.isPersistent = false
-        readyInt.interactionWidth = 0.8f
-        readyInt.interactionHeight = 0.4f
+        readyInt.interactionWidth = 1.2f
+        readyInt.interactionHeight = 0.35f
         readyInt.isResponsive = false
         readyInteraction = readyInt
 
-        val startLoc = actionButtonLocation(btnY, 0.5)
+        val startY = center.blockY + 1.70
+        val startLoc = Location(world, center.x, startY, center.z)
         val startTd = world.spawnEntity(startLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+        rememberOwnedEntity(startTd)
         startTd.isPersistent = false
         startTd.billboard = Display.Billboard.CENTER
-        startTd.backgroundColor = Color.fromARGB(160, 120, 60, 0)
+        startTd.backgroundColor = Color.fromARGB(175, 140, 70, 0)
         startTd.brightness = Display.Brightness(15, 15)
         startTd.isSeeThrough = false
-        startTd.setViewRange(0.4f)
+        startTd.setViewRange(0.6f)
         startTd.alignment = TextDisplay.TextAlignment.CENTER
-        startTd.text(Component.text(" ▶ 開始 ", NamedTextColor.GOLD))
+        startTd.text(Component.text(" ▶ 開始 ", NamedTextColor.GOLD).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
         startTextDisplay = startTd
 
-        val startIntLoc = actionButtonLocation(btnY - 0.15, 0.5)
+        val startIntLoc = Location(world, center.x, startY - 0.15, center.z)
         val startInt = world.spawnEntity(startIntLoc, EntityType.INTERACTION) as Interaction
+        rememberOwnedEntity(startInt)
         startInt.isPersistent = false
-        startInt.interactionWidth = 0.8f
-        startInt.interactionHeight = 0.4f
+        startInt.interactionWidth = 1.2f
+        startInt.interactionHeight = 0.35f
         startInt.isResponsive = false
         startInteraction = startInt
 
-        // The join display is a three-line text block. Keep this button in its
-        // own row below the player-count line instead of sharing its baseline.
-        val settingsLoc = actionButtonLocation(btnY + 0.35, 0.0)
+        val settingsY = center.blockY + 1.30
+        val settingsLoc = Location(world, center.x, settingsY, center.z)
         val settingsTd = world.spawnEntity(settingsLoc, EntityType.TEXT_DISPLAY) as TextDisplay
+        rememberOwnedEntity(settingsTd)
         settingsTd.isPersistent = false
         settingsTd.billboard = Display.Billboard.CENTER
-        settingsTd.backgroundColor = Color.fromARGB(160, 0, 70, 100)
+        settingsTd.backgroundColor = Color.fromARGB(175, 0, 75, 115)
         settingsTd.brightness = Display.Brightness(15, 15)
         settingsTd.isSeeThrough = false
-        settingsTd.setViewRange(0.5f)
+        settingsTd.setViewRange(0.6f)
         settingsTd.alignment = TextDisplay.TextAlignment.CENTER
-        settingsTd.text(Component.text(" ⚙ 設定 ", NamedTextColor.AQUA).decorate(TextDecoration.BOLD))
+        settingsTd.text(Component.text(" ⚙ 設定 ", NamedTextColor.AQUA).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
         settingsTextDisplay = settingsTd
 
-        val settingsInt = world.spawnEntity(settingsLoc.clone().add(0.0, -0.15, 0.0), EntityType.INTERACTION) as Interaction
+        val settingsInt = world.spawnEntity(Location(world, center.x, settingsY - 0.15, center.z), EntityType.INTERACTION) as Interaction
+        rememberOwnedEntity(settingsInt)
         settingsInt.isPersistent = false
-        settingsInt.interactionWidth = 1.0f
-        settingsInt.interactionHeight = 0.4f
+        settingsInt.interactionWidth = 1.2f
+        settingsInt.interactionHeight = 0.35f
         settingsInt.isResponsive = false
         settingsInteraction = settingsInt
     }
@@ -470,22 +507,30 @@ class MahjongTable(
     }
 
     private fun updateActionButtonPositions() {
-        val btnY = center.blockY + 1.8
+        val readyY = center.blockY + 2.10
+        val readyLoc = Location(center.world, center.x, readyY, center.z)
         readyTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
-            teleport(actionButtonLocation(btnY, -0.5))
+            teleport(readyLoc)
         }
-        readyInteraction?.teleport(actionButtonLocation(btnY - 0.15, -0.5))
+        readyInteraction?.teleport(Location(center.world, center.x, readyY - 0.15, center.z))
+
+        val startY = center.blockY + 1.70
+        val startLoc = Location(center.world, center.x, startY, center.z)
         startTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
-            teleport(actionButtonLocation(btnY, 0.5))
+            teleport(startLoc)
         }
-        startInteraction?.teleport(actionButtonLocation(btnY - 0.15, 0.5))
+        startInteraction?.teleport(Location(center.world, center.x, startY - 0.15, center.z))
+
+        val settingsY = center.blockY + 1.30
+        val settingsLoc = Location(center.world, center.x, settingsY, center.z)
         settingsTextDisplay?.apply {
             billboard = Display.Billboard.CENTER
-            teleport(actionButtonLocation(btnY + 0.35, 0.0))
+            teleport(settingsLoc)
         }
-        settingsInteraction?.teleport(actionButtonLocation(btnY + 0.20, 0.0))
+        settingsInteraction?.teleport(Location(center.world, center.x, settingsY - 0.15, center.z))
+
         updateSettingsMenuPositions()
     }
 
@@ -537,6 +582,7 @@ class MahjongTable(
         if (settingsMenuTextDisplay == null || settingsMenuTextDisplay?.isValid != true) {
             val displayLoc = Location(center.world, center.x, center.blockY + 4.65, center.z)
             settingsMenuTextDisplay = (center.world.spawnEntity(displayLoc, EntityType.TEXT_DISPLAY) as TextDisplay).apply {
+                rememberOwnedEntity(this)
                 isPersistent = false
                 billboard = Display.Billboard.CENTER
                 backgroundColor = Color.fromARGB(205, 10, 18, 28)
@@ -555,6 +601,7 @@ class MahjongTable(
         options.forEach { option ->
             val loc = settingsOptionLocation(optionY, option.row, option.column)
             val textDisplay = center.world.spawnEntity(loc, EntityType.TEXT_DISPLAY) as TextDisplay
+            rememberOwnedEntity(textDisplay)
             textDisplay.isPersistent = false
             textDisplay.billboard = Display.Billboard.CENTER
             textDisplay.backgroundColor = Color.fromARGB(175, 25, 35, 45)
@@ -570,6 +617,7 @@ class MahjongTable(
                 loc.clone().add(0.0, SETTINGS_OPTION_INTERACTION_Y_OFFSET, 0.0),
                 EntityType.INTERACTION,
             ) as Interaction
+            rememberOwnedEntity(interaction)
             interaction.isPersistent = false
             interaction.interactionWidth = when (option.action) {
                 "flowers_toggle" -> 1.30f
@@ -696,6 +744,7 @@ class MahjongTable(
                     .append(Component.text("遊戲進行中", NamedTextColor.RED).decoration(TextDecoration.BOLD, false))
             )
         }
+        syncFloatingTextVisibility()
     }
 
     fun showCountdown(seconds: Int) {
@@ -734,9 +783,13 @@ class MahjongTable(
 
     private fun ensurePublicSettingsDisplay(): TextDisplay {
         val current = publicSettingsTextDisplay
-        if (current?.isValid == true) return current
+        if (current?.isValid == true) {
+            rememberOwnedEntity(current)
+            return current
+        }
 
         return (center.world.spawnEntity(publicSettingsDisplayLocation(), EntityType.TEXT_DISPLAY) as TextDisplay).apply {
+            rememberOwnedEntity(this)
             isPersistent = false
             billboard = Display.Billboard.CENTER
             backgroundColor = Color.fromARGB(205, 10, 18, 28)
@@ -767,6 +820,7 @@ class MahjongTable(
         val display = ensureTurnDisplay()
         display.text(text)
         display.teleport(turnDisplayLocation())
+        syncFloatingTextVisibility()
     }
 
     private fun repairTurnDisplay() {
@@ -774,13 +828,18 @@ class MahjongTable(
         val display = ensureTurnDisplay()
         display.text(text)
         display.teleport(turnDisplayLocation())
+        syncFloatingTextVisibility()
     }
 
     private fun ensureTurnDisplay(): TextDisplay {
         val current = turnTextDisplay
-        if (current?.isValid == true) return current
+        if (current?.isValid == true) {
+            rememberOwnedEntity(current)
+            return current
+        }
 
         return (center.world.spawnEntity(turnDisplayLocation(), EntityType.TEXT_DISPLAY) as TextDisplay).apply {
+            rememberOwnedEntity(this)
             isPersistent = false
             billboard = Display.Billboard.CENTER
             backgroundColor = Color.fromARGB(220, 8, 18, 30)
@@ -795,8 +854,62 @@ class MahjongTable(
     private fun turnDisplayLocation(): Location =
         Location(center.world, center.x, center.blockY + 3.65, center.z)
 
+
+    private var hiddenFromPlayerUUIDs: Set<String> = emptySet()
+
+    fun setHiddenFromPlayers(playerUUIDs: Set<String>) {
+        hiddenFromPlayerUUIDs = playerUUIDs
+        syncFloatingTextVisibility()
+    }
+
+    fun syncFloatingTextVisibility() {
+        val plugin = com.mahjongplay.MahjongPlayPlugin.instance
+        if (!plugin.isEnabled) return
+        val targets = hiddenFromPlayerUUIDs.mapNotNull { uuidStr ->
+            runCatching { UUID.fromString(uuidStr) }.getOrNull()?.let { Bukkit.getPlayer(it) }
+        }
+        val displays = listOfNotNull(joinTextDisplay, turnTextDisplay, publicSettingsTextDisplay)
+
+        targets.forEach { player ->
+            displays.forEach { display ->
+                runCatching { player.hideEntity(plugin, display) }
+            }
+        }
+        Bukkit.getOnlinePlayers().filter { it !in targets }.forEach { spectator ->
+            displays.forEach { display ->
+                runCatching { spectator.showEntity(plugin, display) }
+            }
+        }
+    }
+
+    fun revealAllFloatingTexts() {
+        val plugin = com.mahjongplay.MahjongPlayPlugin.instance
+        if (!plugin.isEnabled) return
+        hiddenFromPlayerUUIDs = emptySet()
+        val displays = listOfNotNull(joinTextDisplay, turnTextDisplay, publicSettingsTextDisplay)
+        Bukkit.getOnlinePlayers().forEach { player ->
+            displays.forEach { display ->
+                runCatching { player.showEntity(plugin, display) }
+            }
+        }
+    }
+
+    fun revealFloatingTextsTo(player: Player) {
+        val plugin = com.mahjongplay.MahjongPlayPlugin.instance
+        if (!plugin.isEnabled) return
+        val displays = listOfNotNull(joinTextDisplay, turnTextDisplay, publicSettingsTextDisplay)
+        displays.forEach { display ->
+            runCatching { player.showEntity(plugin, display) }
+        }
+    }
+
     fun isProtectedBlock(loc: Location): Boolean =
         placedBlocks.any { sameBlock(it, loc) }
+
+    private fun rememberOwnedEntity(entity: Entity) {
+        entity.addScoreboardTag(entityOwnershipTag)
+        trackedEntityIds += entity.uniqueId
+    }
 
     fun removeEntities() {
         tableDisplay?.remove()
@@ -811,19 +924,22 @@ class MahjongTable(
         hideActionButtons()
 
         if (center.isChunkLoaded) {
-            center.world.getNearbyEntities(center, 4.0, 3.0, 4.0)
+            val ownedIds = trackedEntityIds.toSet()
+            center.world.getNearbyEntities(center, 4.5, 3.5, 4.5)
                 .filter { entity ->
-                    entity.scoreboardTags.contains("taiwanese_mahjong_table") ||
-                        entity.scoreboardTags.contains("taiwanese_mahjong_chair")
+                    entity.uniqueId in ownedIds ||
+                        entity.scoreboardTags.contains(entityOwnershipTag)
                 }
                 .forEach { it.remove() }
         }
+        trackedEntityIds.clear()
     }
 
     fun destroy() {
         removeEntities()
-        placedBlocks.forEach { it.block.type = Material.AIR }
+        placedBlocks.forEach {
+            if (it.block.type == Material.BARRIER) it.block.type = Material.AIR
+        }
         placedBlocks.clear()
-        clearLegacyTableSurface()
     }
 }

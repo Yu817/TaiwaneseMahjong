@@ -19,6 +19,8 @@ class TurnTimerBar(private val game: MahjongGame) {
     private var durationMs: Long = 0
     private var activePlayerUUID: String? = null
     private val shownPlayerUUIDs = mutableSetOf<UUID>()
+    private var lastTickedSecond: Int = -1
+    private var isClaimAction = false
 
     fun show() {
         if (bar != null) return
@@ -41,7 +43,10 @@ class TurnTimerBar(private val game: MahjongGame) {
 
     fun startAction(player: MahjongPlayerBase, _actions: List<MahjongGameBehavior>, totalSeconds: Int) {
         cancelTimer()
-        activePlayerUUID = player.uuid
+        val isDiscard = MahjongGameBehavior.DISCARD in _actions
+        activePlayerUUID = if (isDiscard) player.uuid else null
+        isClaimAction = !isDiscard
+        lastTickedSecond = -1
         startTimeMs = System.currentTimeMillis()
         durationMs = totalSeconds * 1000L
 
@@ -62,6 +67,15 @@ class TurnTimerBar(private val game: MahjongGame) {
             })
             b.name(buildTitle())
 
+            val remainingSec = ((remaining + 999) / 1000).toInt()
+            if (remainingSec in 1..3 && remainingSec != lastTickedSecond) {
+                lastTickedSecond = remainingSec
+                val p = activePlayerUUID?.let { runCatching { UUID.fromString(it) }.getOrNull() }?.let { Bukkit.getPlayer(it) }
+                if (p != null) {
+                    com.mahjongplay.interaction.MahjongSoundHelper.playCountdownTick(p, remainingSec)
+                }
+            }
+
             if (remaining <= 0) endAction()
         }, 0L, 2L)
     }
@@ -69,6 +83,8 @@ class TurnTimerBar(private val game: MahjongGame) {
     fun endAction() {
         cancelTimer()
         activePlayerUUID = null
+        isClaimAction = false
+        lastTickedSecond = -1
         bar?.let {
             it.progress(1.0f)
             it.color(BossBar.Color.GREEN)
@@ -77,14 +93,14 @@ class TurnTimerBar(private val game: MahjongGame) {
     }
 
     private fun buildTitle(): Component {
-        val activePlayer = activePlayerUUID?.let { uuid ->
-            game.players.firstOrNull { it.uuid == uuid }
-        }
-        return if (activePlayer == null) {
-            Component.text("麻將", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
-        } else {
-            Component.text("目前：${activePlayer.displayName} 出牌", NamedTextColor.AQUA)
-                .decorate(TextDecoration.BOLD)
+        return when {
+            isClaimAction -> Component.text("麻將 • 等待操作...", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
+            activePlayerUUID != null -> {
+                val activePlayer = game.players.firstOrNull { it.uuid == activePlayerUUID }
+                Component.text("目前：${activePlayer?.displayName ?: "玩家"} 出牌", NamedTextColor.AQUA)
+                    .decorate(TextDecoration.BOLD)
+            }
+            else -> Component.text("麻將", NamedTextColor.GOLD).decorate(TextDecoration.BOLD)
         }
     }
 

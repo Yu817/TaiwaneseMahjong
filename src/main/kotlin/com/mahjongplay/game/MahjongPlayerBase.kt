@@ -22,10 +22,11 @@ abstract class MahjongPlayerBase {
     val discardedTiles: MutableList<MahjongTile> = CopyOnWriteArrayList()
     val discardedTilesForDisplay: MutableList<MahjongTile> = CopyOnWriteArrayList()
     var justDrewTile: Boolean = false
+    var game: MahjongGame? = null
 
     /**
      * 過水：曾有合法胡牌機會卻選擇不胡。
-     * 採競技台麻常見規則，過水期間榮和與自摸都不可；自己合法打出一張牌後解除。
+     * 採競技台麻常見規則，過水期間胡牌與自摸都不可；自己合法打出一張牌後解除。
      */
     var passedWin: Boolean = false
         private set

@@ -19,6 +19,8 @@ import java.util.UUID
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import com.mahjongplay.economy.EconomyObligation
+import com.mahjongplay.economy.EconomyTransferService
 
 /** Paper 顯示／互動橋接；規則與台數計算留在 Bukkit 無關的核心類別。 */
 class PaperGameBridge(
@@ -32,6 +34,8 @@ class PaperGameBridge(
     private var activeTurnPlayerUUID: String? = null
     private var activeTurnSeatIndex: Int = -1
     private val turnTimerBar = TurnTimerBar(game)
+    private val activeBukkitPlayers: List<Player>
+        get() = game.realPlayers.mapNotNull { runCatching { Bukkit.getPlayer(UUID.fromString(it.uuid)) }.getOrNull() }
 
     override fun onGameStart(game: MahjongGame) {
         renderer.onGameStart(game)
@@ -43,6 +47,8 @@ class PaperGameBridge(
         stopTurnParticleTask()
         startDiscardHoverUpdates()
         updateTurnDisplay(null)
+        val playingUUIDs = game.realPlayers.map { it.uuid }.toSet()
+        tableManager.getSession(game.tableId)?.table?.setHiddenFromPlayers(playingUUIDs)
         broadcast(Component.text("[台麻] 遊戲開始！", NamedTextColor.GOLD))
         startHudUpdates()
         turnTimerBar.cleanup()
@@ -53,15 +59,26 @@ class PaperGameBridge(
             tableManager.teleportPlayersToSeats(game)
             forEachPlayer { player ->
                 val mjPlayer = game.realPlayers.find { it.uuid == player.uniqueId.toString() }
-                val wind = mjPlayer?.let { ActionBarHUD.seatWindOf(game, it) }
-                player.showTitle(
-                    Title.title(
-                        Component.text("${wind?.displayName ?: "?"}家", NamedTextColor.GOLD)
-                            .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
-                        Component.text("你的牌就在面前，準備開始！", NamedTextColor.GREEN),
-                        Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                if (game.rule.seatWindDrawEnabled) {
+                    player.showTitle(
+                        Title.title(
+                            Component.text("【開局抓位・抓風】", NamedTextColor.GOLD)
+                                .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
+                            Component.text("請依擲骰順序抽取風牌決定座位！", NamedTextColor.GREEN),
+                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                        )
                     )
-                )
+                } else {
+                    val wind = mjPlayer?.let { ActionBarHUD.seatWindOf(game, it) }
+                    player.showTitle(
+                        Title.title(
+                            Component.text("${wind?.displayName ?: "?"}家", NamedTextColor.GOLD)
+                                .decorate(net.kyori.adventure.text.format.TextDecoration.BOLD),
+                            Component.text("你的牌就在面前，準備開始！", NamedTextColor.GREEN),
+                            Title.Times.times(Duration.ofMillis(150), Duration.ofSeconds(2), Duration.ofMillis(350))
+                        )
+                    )
+                }
             }
             updateHud()
         }
@@ -70,6 +87,9 @@ class PaperGameBridge(
     }
 
     override fun onRoundStart(game: MahjongGame, round: MahjongRound) {
+        runCatching {
+            MahjongPlayPlugin.instance.statsManager.recordHandsPlayed(game.players.map { it.uuid })
+        }
         renderer.onRoundStart(game, round)
         forEachPlayer { player ->
             val mjPlayer = game.realPlayers.find { it.uuid == player.uniqueId.toString() }
@@ -91,12 +111,74 @@ class PaperGameBridge(
         scheduleTurnChange(player, action)
     }
 
+    override fun onSeatWindDrawStarted(event: SeatWindDrawStartEvent) {
+        renderer.onSeatWindDrawStarted(event)
+    }
+
+    override fun onSeatWindTurnPrompt(event: SeatWindTurnPromptEvent) {
+        renderer.onSeatWindTurnPrompt(event)
+    }
+
+    override fun onSeatWindTilePicked(event: SeatWindTilePickedEvent) {
+        renderer.onSeatWindTilePicked(event)
+    }
+
+    override fun onSeatWindDrawCompleted(event: SeatWindDrawCompleteEvent) {
+        renderer.onSeatWindDrawCompleted(event)
+        updateHud()
+    }
+
+    override fun onWallInitialized(event: WallInitializedEvent) {
+        renderer.onWallInitialized(event)
+    }
+
+    override fun onOpeningDiceStarted(event: OpeningDiceEvent) {
+        renderer.onOpeningDiceStarted(event)
+        val dealer = game.seat.getOrNull(event.dealerSeatIndex)?.displayName ?: "莊家"
+        showEventTitle(
+            Component.text("莊家擲骰子", NamedTextColor.GOLD),
+            Component.text(dealer, NamedTextColor.AQUA),
+        )
+    }
+
+    override fun onOpeningDiceCompleted(event: OpeningDiceEvent) {
+        renderer.onOpeningDiceCompleted(event)
+        val wallOwner = game.seat.getOrNull(event.dice.selectedWall(event.dealerSeatIndex))?.displayName ?: "牌牆"
+        showEventTitle(
+            Component.text("骰點 ${event.dice.total}", NamedTextColor.GOLD),
+            Component.text("${event.dice.values.joinToString(" + ")}，從 $wallOwner 的牌牆開門", NamedTextColor.YELLOW),
+        )
+    }
+
+    override fun onTileDrawStarted(event: TileDrawEvent) {
+        renderer.onTileDrawStarted(event)
+    }
+
+    override fun onTileDrawCompleted(event: TileDrawEvent) {
+        renderer.onTileDrawCompleted(event)
+    }
+
     override fun onTileDrawn(player: MahjongPlayerBase, tile: MahjongTile) {
         renderer.onTileDrawn(player, tile)
+        MahjongSoundHelper.playTileDraw(renderer.tableCenter, activeBukkitPlayers)
+    }
+
+    override fun onFlowerDrawn(player: MahjongPlayerBase, flower: MahjongTile) {
+        Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable {
+            MahjongSoundHelper.playFlower(renderer.tableCenter, activeBukkitPlayers)
+            showEventTitle(
+                Component.text("補花！", NamedTextColor.LIGHT_PURPLE),
+                Component.text("${player.displayName} · ${flower.displayName}", NamedTextColor.AQUA),
+            )
+            broadcast(
+                Component.text("[台麻] ${player.displayName} 補花：${flower.displayName}", NamedTextColor.LIGHT_PURPLE),
+            )
+        })
     }
 
     override fun onTileDiscarded(player: MahjongPlayerBase, tile: MahjongTile) {
         renderer.onTileDiscarded(player, tile)
+        MahjongSoundHelper.playTileDiscard(renderer.tableCenter, activeBukkitPlayers)
         updateHud()
     }
 
@@ -114,29 +196,51 @@ class PaperGameBridge(
 
     override fun onChii(player: MahjongPlayerBase, claimedTile: MahjongTile, from: MahjongPlayerBase) {
         renderer.onChii(player, claimedTile, from)
+        MahjongSoundHelper.playChii(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("吃！", NamedTextColor.GREEN), Component.text(player.displayName, NamedTextColor.AQUA))
     }
 
     override fun onPon(player: MahjongPlayerBase, claimedTile: MahjongTile, from: MahjongPlayerBase) {
         renderer.onPon(player, claimedTile, from)
-        showEventTitle(Component.text("碰！", NamedTextColor.BLUE), Component.text(player.displayName, NamedTextColor.AQUA))
+        MahjongSoundHelper.playPon(renderer.tableCenter, activeBukkitPlayers)
+        showEventTitle(Component.text("碰！", NamedTextColor.AQUA), Component.text(player.displayName, NamedTextColor.AQUA))
     }
 
     override fun onKan(player: MahjongPlayerBase, tile: MahjongTile, kanType: String, from: MahjongPlayerBase?) {
         renderer.onKan(player, tile, kanType, from)
-        showEventTitle(Component.text("槓！", NamedTextColor.DARK_AQUA), Component.text(player.displayName, NamedTextColor.AQUA))
+        MahjongSoundHelper.playKan(renderer.tableCenter, activeBukkitPlayers)
+        val label = when (kanType) {
+            "ankan" -> "暗槓"
+            "kakan" -> "加槓"
+            else -> "明槓"
+        }
+        showEventTitle(
+            Component.text("$label！", NamedTextColor.DARK_AQUA),
+            Component.text(player.displayName, NamedTextColor.AQUA),
+        )
     }
 
     override fun onTsumo(player: MahjongPlayerBase, tile: MahjongTile, settlement: TaiwanSettlement) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable { renderer.revealHands(player) })
+        MahjongSoundHelper.playTsumo(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(Component.text("自摸！", NamedTextColor.GOLD), Component.text(player.displayName, NamedTextColor.AQUA))
         sendTaiSummary(settlement)
+        runCatching {
+            MahjongPlayPlugin.instance.statsManager.recordTsumo(player.uuid, player.displayName, settlement)
+        }
     }
 
     override fun onRon(winners: List<MahjongPlayerBase>, loser: MahjongPlayerBase, tile: MahjongTile, settlements: List<TaiwanSettlement>) {
         Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, Runnable { winners.forEach { renderer.revealHands(it) } })
-        showEventTitle(Component.text("榮和！", NamedTextColor.RED), Component.text(winners.joinToString(", ") { it.displayName }, NamedTextColor.AQUA))
+        MahjongSoundHelper.playRon(renderer.tableCenter, activeBukkitPlayers)
+        showEventTitle(Component.text("胡牌！", NamedTextColor.RED), Component.text(winners.joinToString(", ") { it.displayName }, NamedTextColor.AQUA))
         settlements.forEach { sendTaiSummary(it) }
+        runCatching {
+            winners.forEachIndexed { i, w ->
+                val s = settlements.getOrElse(i) { settlements.first() }
+                MahjongPlayPlugin.instance.statsManager.recordRon(w.uuid, w.displayName, loser.uuid, loser.displayName, s)
+            }
+        }
     }
 
     override fun onDraw(draw: ExhaustiveDraw, settlement: ScoreSettlement) {
@@ -145,27 +249,84 @@ class PaperGameBridge(
                 game.players.filter { it.isTenpai }.forEach { renderer.revealHands(it) }
             })
         }
+        MahjongSoundHelper.playDraw(renderer.tableCenter, activeBukkitPlayers)
         showEventTitle(draw.toText().color(NamedTextColor.YELLOW), Component.text("流局", NamedTextColor.GRAY))
     }
 
     override fun onScoreSettlement(settlement: ScoreSettlement) {
+        MahjongSoundHelper.playScoreSettlement(renderer.tableCenter, activeBukkitPlayers)
         settlement.rankedScoreList.forEachIndexed { index, ranked ->
             broadcast(
                 Component.text("  ${index + 1}. ", NamedTextColor.YELLOW)
                     .append(Component.text(ranked.scoreItem.displayName, NamedTextColor.AQUA))
-                    .append(Component.text("  ${ranked.scoreTotal}分", NamedTextColor.WHITE))
+                    .append(Component.text("  " + (if (ranked.scoreTotal > 0) "+${ranked.scoreTotal}" else "${ranked.scoreTotal}") + " 積分", if (ranked.scoreTotal > 0) NamedTextColor.GREEN else if (ranked.scoreTotal < 0) NamedTextColor.RED else NamedTextColor.WHITE))
                     .append(Component.text(" (${ranked.scoreChangeText})", NamedTextColor.GRAY))
             )
         }
     }
 
+    override fun onEconomyObligation(obligation: EconomyObligation) {
+        val plugin = MahjongPlayPlugin.instance
+        val economy = plugin.currentEconomy()
+        if (economy == null) {
+            plugin.recordEconomyPayment(obligation.payerUUID, obligation.winnerUUID, obligation.amount.toDouble())
+            broadcast(Component.text("[麻將經濟] ${plugin.economyUnavailableReason()} 本筆真人付款已記錄為待人工處理，不會無聲略過。", NamedTextColor.RED))
+            return
+        }
+        val result = EconomyTransferService(economy).transfer(obligation)
+        val payerName = game.players.find { it.uuid == obligation.payerUUID }?.displayName ?: "付款者"
+        val winnerName = game.players.find { it.uuid == obligation.winnerUUID }?.displayName ?: "贏家"
+        if (!result.success) {
+            // The score settlement has already happened. A provider failure
+            // must therefore remain a durable winner-payment obligation,
+            // never an untracked score-only result.
+            plugin.recordEconomyPayment(obligation.payerUUID, obligation.winnerUUID, result.requestedAmount)
+            if (result.unrefundedAmount > 0.0) {
+                plugin.recordEconomyRefund(obligation.payerUUID, result.unrefundedAmount)
+            }
+            broadcast(Component.text("[麻將經濟] $payerName → $winnerName 轉帳失敗：${result.error}", NamedTextColor.RED))
+            return
+        }
+        broadcast(
+            Component.text("[麻將經濟] ", NamedTextColor.GOLD)
+                .append(Component.text("$payerName 支付 ${economy.format(result.paidAmount)} 給 $winnerName", NamedTextColor.GREEN)),
+        )
+        if (result.shortfall > 0.0) {
+            plugin.recordEconomyPayment(obligation.payerUUID, obligation.winnerUUID, result.shortfall)
+            broadcast(
+                Component.text(
+                    "[麻將經濟] $payerName 餘額不足，尚有 ${economy.format(result.shortfall)} 未支付。",
+                    NamedTextColor.YELLOW,
+                ),
+            )
+        }
+    }
+
+
+
     override fun onGameEnd(game: MahjongGame, scoreList: List<ScoreItem>) {
+        // Persist the result before scheduling cosmetic cleanup.  During
+        // plugin shutdown Bukkit may never run the queued task, which used to
+        // make the final round disappear from statistics.
+        runCatching {
+            MahjongPlayPlugin.instance.statsManager.recordMatchEnd(scoreList)
+        }
         val task = Runnable {
             renderer.onGameEnd(game, scoreList)
             stopHudUpdates()
             stopDiscardHoverUpdates()
             turnTimerBar.cleanup()
             stopTurnParticleTask()
+            tableManager.resetCenterInspection(game)
+            // 剃除因離線而託管的玩家，避免永遠卡在牌桌隊列中
+            val offlinePlayers = game.players.filterIsInstance<MahjongPlayer>().filter {
+                it.isQuitOffline || (Bukkit.getPlayer(UUID.fromString(it.uuid))?.isOnline != true)
+            }
+            offlinePlayers.forEach { op ->
+                tableManager.leaveTable(op.uuid)
+                runCatching { UUID.fromString(op.uuid) }.getOrNull()?.let { tableManager.releasePlayerFromChairs(it) }
+            }
+
             tableManager.getSession(game.tableId)?.let {
                 it.table.updateTurnDisplay(null)
                 tableManager.updateTableDisplay(it)
@@ -174,7 +335,8 @@ class PaperGameBridge(
             }
             broadcast(Component.text("[台麻] 遊戲結束！", NamedTextColor.GOLD))
             scoreList.sortedByDescending { it.scoreOrigin }.forEachIndexed { index, item ->
-                broadcast(Component.text("  ${index + 1}. ${item.displayName}  ${item.scoreOrigin}分", NamedTextColor.YELLOW))
+                val finalScoreText = if (item.scoreOrigin > 0) "+${item.scoreOrigin}" else "${item.scoreOrigin}"
+                broadcast(Component.text("  ${index + 1}. ${item.displayName}  ${finalScoreText} 積分", NamedTextColor.YELLOW))
             }
         }
         if (MahjongPlayPlugin.instance.isEnabled) Bukkit.getScheduler().runTask(MahjongPlayPlugin.instance, task) else task.run()
@@ -186,7 +348,7 @@ class PaperGameBridge(
         val flowers = if (settlement.flowerCount > 0) "，花牌${settlement.flowerCount}張" else ""
         broadcast(
             Component.text("  台: $items$flowers", NamedTextColor.GREEN)
-                .append(Component.text("  合計${settlement.tai}台，${settlement.score}分", NamedTextColor.YELLOW))
+                .append(Component.text("  合計${settlement.tai}台，底台結算 ${settlement.score} 積分", NamedTextColor.YELLOW))
         )
     }
 
@@ -223,9 +385,9 @@ class PaperGameBridge(
         }
     }
 
-    private fun updateHud() = ActionBarHUD.sendUpdate(game)
+    fun updateHud() = ActionBarHUD.sendUpdate(game)
 
-    private fun broadcast(message: Component) = forEachPlayer { it.sendMessage(message) }
+    fun broadcast(message: Component) = forEachPlayer { it.sendMessage(message) }
 
     private fun forEachPlayer(action: (Player) -> Unit) {
         game.players.forEach { player -> Bukkit.getPlayer(UUID.fromString(player.uuid))?.let(action) }
@@ -236,6 +398,7 @@ class PaperGameBridge(
         stopDiscardHoverUpdates()
         turnTimerBar.cleanup()
         stopTurnParticleTask()
+        tableManager.resetCenterInspection(game)
     }
 
     fun hideBarForPlayer(playerUUID: String) = turnTimerBar.hideForPlayer(playerUUID)
@@ -245,7 +408,12 @@ class PaperGameBridge(
             turnTimerBar.startAction(player, behaviors, timeoutSeconds)
             renderer.spawnActionOptions(player.uuid, player.actionOptions)
             Bukkit.getPlayer(UUID.fromString(player.uuid))?.let { renderer.refreshDiscardHover(it) }
-            updateTurnDisplay(player, pendingActionText(behaviors), NamedTextColor.YELLOW)
+            val isDiscardTurn = MahjongGameBehavior.DISCARD in behaviors
+            if (isDiscardTurn) {
+                updateTurnDisplay(player, "請出牌", NamedTextColor.YELLOW)
+            } else {
+                updateTurnDisplay(null, "等待操作...", NamedTextColor.GRAY)
+            }
             updateHud()
         })
     }
@@ -329,9 +497,9 @@ class PaperGameBridge(
 
     private fun playTurnChangeSound(seatIndex: Int) {
         val location = tableManager.getSession(game.tableId)?.table?.turnIndicatorLocation(seatIndex) ?: return
-        forEachPlayer { player ->
-            player.playSound(location, Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 0.55f, 1.2f)
-        }
+        val currentSeat = game.seat.getOrNull(seatIndex) ?: return
+        val player = Bukkit.getPlayer(UUID.fromString(currentSeat.uuid)) ?: return
+        MahjongSoundHelper.playTurnPrompt(location, player)
     }
 
     private fun stopTurnParticleTask() {
@@ -363,7 +531,7 @@ class PaperGameBridge(
             .joinToString("／") { behavior ->
                 when (behavior) {
                     MahjongGameBehavior.TSUMO -> "自摸"
-                    MahjongGameBehavior.RON -> "榮和"
+                    MahjongGameBehavior.RON -> "胡牌"
                     MahjongGameBehavior.CHII -> "吃"
                     MahjongGameBehavior.PON_OR_CHII -> "碰／吃"
                     MahjongGameBehavior.PON -> "碰"

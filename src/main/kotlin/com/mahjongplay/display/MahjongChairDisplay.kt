@@ -22,6 +22,7 @@ import java.util.UUID
 class MahjongChairDisplay(
     private val location: Location,
     private val yaw: Float,
+    private val ownershipTag: String? = null,
 ) {
     var entity: ItemDisplay? = null
         private set
@@ -43,6 +44,7 @@ class MahjongChairDisplay(
             if (existing.isNotEmpty()) {
                 val primary = existing.first()
                 existing.drop(1).forEach { it.remove() }
+                ownershipTag?.let(primary::addScoreboardTag)
                 normalizeOrientation(primary)
                 entity = primary
                 ensureSeatEntity()
@@ -53,6 +55,7 @@ class MahjongChairDisplay(
         val display = location.world.spawnEntity(spawnLoc, EntityType.ITEM_DISPLAY) as ItemDisplay
         display.isPersistent = true
         display.addScoreboardTag("taiwanese_mahjong_chair")
+        ownershipTag?.let(display::addScoreboardTag)
         display.setViewRange(1.0f)
         display.setVisibleByDefault(true)
         display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE)
@@ -105,6 +108,16 @@ class MahjongChairDisplay(
         releaseAllPassengers()
         seatEntity?.remove()
         seatEntity = null
+        val seatLoc = seatLocation()
+        if (seatLoc.isChunkLoaded) {
+            seatLoc.world.getNearbyEntities(seatLoc, 0.25, 0.25, 0.25)
+                .filterIsInstance<ArmorStand>()
+                .filter { stand ->
+                    stand.scoreboardTags.contains("taiwanese_mahjong_seat") &&
+                        stand.location.distanceSquared(seatLoc) < 0.01
+                }
+                .forEach { it.remove() }
+        }
         entity?.remove()
         entity = null
         if (location.isChunkLoaded) {
@@ -127,7 +140,29 @@ class MahjongChairDisplay(
         }
         seatEntity?.remove()
 
-        val seat = location.world.spawnEntity(seatLocation(), EntityType.ARMOR_STAND) as ArmorStand
+        val seatLoc = seatLocation()
+        val migrated = if (seatLoc.isChunkLoaded) {
+            seatLoc.world.getNearbyEntities(seatLoc, 0.25, 0.25, 0.25)
+                .filterIsInstance<ArmorStand>()
+                .firstOrNull { stand ->
+                    stand.scoreboardTags.contains("taiwanese_mahjong_seat") &&
+                        stand.location.distanceSquared(seatLoc) < 0.01
+                }
+        } else null
+        if (migrated != null) {
+            ownershipTag?.let(migrated::addScoreboardTag)
+            seatEntity = migrated
+            migrated.isInvisible = true
+            migrated.isInvulnerable = true
+            migrated.isSilent = true
+            migrated.isCollidable = false
+            migrated.setGravity(false)
+            migrated.setMarker(true)
+            migrated.setRotation(yaw, 0f)
+            return migrated
+        }
+
+        val seat = location.world.spawnEntity(seatLoc, EntityType.ARMOR_STAND) as ArmorStand
         seat.isPersistent = false
         seat.isInvisible = true
         seat.isInvulnerable = true
@@ -139,6 +174,7 @@ class MahjongChairDisplay(
         seat.setArms(false)
         seat.setRotation(yaw, 0f)
         seat.addScoreboardTag("taiwanese_mahjong_seat")
+        ownershipTag?.let(seat::addScoreboardTag)
         seatEntity = seat
         return seat
     }

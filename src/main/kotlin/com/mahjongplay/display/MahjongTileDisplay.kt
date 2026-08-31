@@ -24,6 +24,9 @@ object TileConstants {
     const val DEPTH = 0.5f * SCALE
 
     const val PADDING = 0.005f
+    const val INTERACTION_WIDTH = WIDTH * 0.8f
+    const val HAND_GAP = 0.002
+    const val DRAWN_TILE_GAP = 0.03
 
     const val STICK_WIDTH = 0.15f
     const val STICK_HEIGHT = 0.02f
@@ -38,6 +41,8 @@ class MahjongTileDisplay(
     var face: TileFace = TileFace.FACE_DOWN,
     var yaw: Float = 0f,
     val interactive: Boolean = false,
+    var scale: Float = TileConstants.SCALE,
+    val ownershipTag: String? = null,
 ) {
     var entity: ItemDisplay? = null
         private set
@@ -48,6 +53,7 @@ class MahjongTileDisplay(
         val world = location.world
         val display = world.spawnEntity(location, EntityType.ITEM_DISPLAY) as ItemDisplay
         display.isPersistent = false
+        ownershipTag?.let(display::addScoreboardTag)
         display.setViewRange(1.0f)
         display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE)
 
@@ -69,8 +75,10 @@ class MahjongTileDisplay(
         val world = location.world
         val interaction = world.spawnEntity(location, EntityType.INTERACTION) as Interaction
         interaction.isPersistent = false
-        interaction.interactionWidth = TileConstants.WIDTH + 0.02f
-        interaction.interactionHeight = TileConstants.HEIGHT + 0.02f
+        ownershipTag?.let(interaction::addScoreboardTag)
+        val factor = scale / TileConstants.SCALE
+        interaction.interactionWidth = (TileConstants.WIDTH + 0.02f) * factor
+        interaction.interactionHeight = (TileConstants.HEIGHT + 0.02f) * factor
         interaction.isResponsive = false
         interactionEntity = interaction
     }
@@ -119,7 +127,7 @@ class MahjongTileDisplay(
             }
         }
 
-        matrix.scale(TileConstants.SCALE)
+        matrix.scale(scale)
 
         display.setTransformationMatrix(matrix)
     }

@@ -12,7 +12,10 @@ import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 
-class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor, TabCompleter {
+class MahjongCommand(
+    private val manager: MahjongTableManager,
+    private val statsManager: com.mahjongplay.stats.MahjongStatsManager,
+) : CommandExecutor, TabCompleter {
 
     companion object {
         private data class CommandPermission(val node: String, val deniedMessage: String)
@@ -30,7 +33,8 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
             "action" to CommandPermission("mahjongplay.command.action", "你沒有權限執行麻將操作"),
             "settings" to CommandPermission("mahjongplay.command.settings", "你沒有權限調整麻將規則"),
             "list" to CommandPermission("mahjongplay.command.list", "你沒有權限查看麻將桌列表"),
-            "info" to CommandPermission("mahjongplay.command.info", "你沒有權限查看麻將桌資訊")
+            "info" to CommandPermission("mahjongplay.command.info", "你沒有權限查看麻將桌資訊"),
+            "status" to CommandPermission("mahjongplay.command.status", "你沒有權限查看麻將戰績統計")
         )
     }
 
@@ -64,13 +68,14 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
             "ready" -> handleReady(sender, true)
             "unready" -> handleReady(sender, false)
             "start" -> handleStart(sender)
-            "bot" -> handleAddBot(sender)
+            "bot" -> handleAddBot(sender, args)
             "kick" -> handleKick(sender, args)
             "destroy" -> handleDestroy(sender, args)
             "action" -> handleAction(sender, args)
             "settings", "setting" -> handleSettings(sender, args)
             "list" -> handleList(sender)
             "info" -> handleInfo(sender)
+            "status", "stats", "profile" -> handleStatus(sender, args)
             else -> sendHelp(sender)
         }
         return true
@@ -181,19 +186,11 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
             player.msg("目前沒有可用的麻將桌", NamedTextColor.RED)
             return
         }
-        if (session.game.players.size != session.game.rule.playerCount) {
-            val pc = session.game.rule.playerCount
-            player.msg("需要 ${pc} 位玩家才能開始（目前 ${session.game.players.size}/$pc，使用 /mahjong bot 新增機器人）", NamedTextColor.RED)
-            return
-        }
-        if (!session.game.players.all { it.ready }) {
-            player.msg("還有玩家未準備", NamedTextColor.RED)
-            return
-        }
-        session.game.start()
+        val error = manager.startGame(session)
+        if (error != null) player.msg(error, NamedTextColor.RED)
     }
 
-    private fun handleAddBot(player: Player) {
+    private fun handleAddBot(player: Player, args: Array<out String>) {
         val session = manager.getSessionForPlayer(player.uniqueId.toString())
             ?: manager.getAllSessions().firstOrNull()
         if (session == null) {
@@ -208,10 +205,16 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
             player.msg("牌桌已滿", NamedTextColor.RED)
             return
         }
+        if (!session.game.rule.botsEnabled) {
+            player.msg("牌桌設定中已關閉 Bots（機器人）。若要加入機器人，請先在牌桌設定中開啟 Bots！", NamedTextColor.RED)
+            return
+        }
+        val difficulty = args.getOrNull(1)?.let { com.mahjongplay.game.BotDifficulty.fromString(it) }
+            ?: session.game.rule.defaultBotDifficulty
         val botNum = session.game.players.count { !it.isRealPlayer } + 1
-        session.game.addBot("Bot$botNum")
+        session.game.addBot("Bot$botNum", difficulty)
         manager.updateTableDisplay(session)
-        player.msg("已新增機器人 Bot$botNum（${session.game.players.size}/${session.game.rule.playerCount}）", NamedTextColor.GREEN)
+        player.msg("已新增機器人 Bot$botNum [${difficulty.displayName}]（${session.game.players.size}/${session.game.rule.playerCount}）", NamedTextColor.GREEN)
         manager.checkAutoStart(session)
     }
 
@@ -423,29 +426,51 @@ class MahjongCommand(private val manager: MahjongTableManager) : CommandExecutor
         session.game.rule.toComponents().forEach { player.sendMessage(it) }
     }
 
+    private fun handleStatus(player: Player, args: Array<out String>) {
+        val targetName = args.getOrNull(1)
+        val stats = if (targetName != null) {
+            statsManager.getStatsByName(targetName) ?: run {
+                player.msg("找不到玩家【$targetName】的麻將戰績紀錄！", NamedTextColor.RED)
+                return
+            }
+        } else {
+            statsManager.getStats(player.uniqueId.toString(), player.name)
+        }
+        com.mahjongplay.stats.MahjongStatsGUI.openStats(player, stats)
+    }
+
     private fun sendHelp(player: Player) {
         player.msg("=== 台灣麻將指令 ===", NamedTextColor.GOLD)
         player.msg("/mahjong create [one/east/twowind] - 建立台麻牌桌", NamedTextColor.YELLOW)
         player.msg("/mahjong join [id] - 加入牌桌", NamedTextColor.YELLOW)
         player.msg("/mahjong leave - 離開牌桌", NamedTextColor.YELLOW)
         player.msg("/mahjong ready/unready - 準備/取消準備", NamedTextColor.YELLOW)
-        player.msg("/mahjong bot - 新增機器人", NamedTextColor.YELLOW)
+        player.msg("/mahjong bot [初級|中級|高級] - 新增指定難度機器人", NamedTextColor.YELLOW)
          player.msg("/mahjong settings - 調整局數、Bot速度、底/台、花牌、椅子", NamedTextColor.YELLOW)
         player.msg("/mahjong start - 開始遊戲", NamedTextColor.YELLOW)
         player.msg("/mahjong destroy - 銷毀牌桌", NamedTextColor.YELLOW)
         player.msg("/mahjong info - 查看牌桌規則", NamedTextColor.YELLOW)
         player.msg("/mahjong list - 查看所有牌桌", NamedTextColor.YELLOW)
+        player.msg("/mahjong status [玩家] - 查看麻將個人歷史戰績與段位選單", NamedTextColor.YELLOW)
     }
 
     override fun onTabComplete(sender: CommandSender, command: Command, label: String, args: Array<out String>): List<String> {
         if (args.size == 1) {
-            return listOf("create", "join", "leave", "ready", "unready", "start", "bot", "settings", "kick", "destroy", "info", "list")
+            return listOf("create", "join", "leave", "ready", "unready", "start", "bot", "settings", "kick", "destroy", "info", "list", "status")
                 .filter { sender.hasCommandPermission(it) }
                 .filter { it.startsWith(args[0].lowercase()) }
+        }
+        if (args.size == 2 && (args[0].lowercase() == "status" || args[0].lowercase() == "stats")) {
+            return org.bukkit.Bukkit.getOnlinePlayers().map { it.name }.filter { it.startsWith(args[1], ignoreCase = true) }
         }
         if (args.size == 2 && args[0].lowercase() == "create") {
             if (!sender.hasCommandPermission("create")) return emptyList()
             return listOf("one", "east", "twowind", "rounds")
+                .filter { it.startsWith(args[1].lowercase()) }
+        }
+        if (args.size == 2 && args[0].lowercase() == "bot") {
+            if (!sender.hasCommandPermission("bot")) return emptyList()
+            return listOf("low", "medium", "high", "初級", "中級", "高級")
                 .filter { it.startsWith(args[1].lowercase()) }
         }
         if (args.size == 2 && args[0].lowercase() == "settings") {

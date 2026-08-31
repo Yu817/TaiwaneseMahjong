@@ -22,7 +22,16 @@ object ActionBarHUD {
                 .append(Component.text("  •  ${game.round.displayName()}", NamedTextColor.AQUA))
                 .append(Component.text("  •  ${seatWind.displayName}家", NamedTextColor.LIGHT_PURPLE))
                 .append(Component.text("  •  剩餘牌 ${game.wallSize}", NamedTextColor.GREEN))
-                .append(Component.text("  •  ${mjPlayer.points}分", NamedTextColor.WHITE))
+                            val pointsText = when {
+                mjPlayer.points > 0 -> "+${mjPlayer.points}"
+                else -> "${mjPlayer.points}"
+            }
+            val pointsColor = when {
+                mjPlayer.points > 0 -> NamedTextColor.GREEN
+                mjPlayer.points < 0 -> NamedTextColor.RED
+                else -> NamedTextColor.WHITE
+            }
+            bar = bar.append(Component.text("  •  積分 $pointsText", pointsColor))
 
             if (game.round.honba > 0) {
                 bar = bar.append(Component.text("  •  連${game.round.honba}", NamedTextColor.YELLOW))
